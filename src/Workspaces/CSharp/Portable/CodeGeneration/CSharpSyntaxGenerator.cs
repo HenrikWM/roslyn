@@ -1,4 +1,6 @@
-﻿// Copyright (c) Microsoft.  All Rights Reserved.  Licensed under the Apache License, Version 2.0.  See License.txt in the project root for license information.
+﻿// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 using System;
 using System.Collections.Generic;
@@ -6,11 +8,14 @@ using System.Collections.Immutable;
 using System.Composition;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Extensions;
+using Microsoft.CodeAnalysis.CSharp.LanguageServices;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Editing;
 using Microsoft.CodeAnalysis.Host.Mef;
 using Microsoft.CodeAnalysis.LanguageServices;
+using Microsoft.CodeAnalysis.PooledObjects;
 using Microsoft.CodeAnalysis.Shared.Extensions;
 using Microsoft.CodeAnalysis.Simplification;
 using Roslyn.Utilities;
@@ -20,12 +25,25 @@ namespace Microsoft.CodeAnalysis.CSharp.CodeGeneration
     [ExportLanguageService(typeof(SyntaxGenerator), LanguageNames.CSharp), Shared]
     internal class CSharpSyntaxGenerator : SyntaxGenerator
     {
+        // A bit hacky, but we need to actually run ParseToken on the "nameof" text as there's no
+        // other way to get a token back that has the appropriate internal bit set that indicates
+        // this has the .ContextualKind of SyntaxKind.NameOfKeyword.
+        private static readonly IdentifierNameSyntax s_nameOfIdentifier =
+            SyntaxFactory.IdentifierName(SyntaxFactory.ParseToken("nameof"));
+
+        [ImportingConstructor]
+        public CSharpSyntaxGenerator()
+        {
+        }
+
         internal override SyntaxTrivia ElasticCarriageReturnLineFeed => SyntaxFactory.ElasticCarriageReturnLineFeed;
         internal override SyntaxTrivia CarriageReturnLineFeed => SyntaxFactory.CarriageReturnLineFeed;
 
         internal override bool RequiresExplicitImplementationForInterfaceMembers => false;
 
-        internal override ISyntaxFactsService SyntaxFacts => CSharpSyntaxFactsService.Instance;
+        internal override ISyntaxFacts SyntaxFacts => CSharpSyntaxFacts.Instance;
+
+        internal override SyntaxGeneratorInternal SyntaxGeneratorInternal => CSharpSyntaxGeneratorInternal.Instance;
 
         internal override SyntaxTrivia EndOfLine(string text)
             => SyntaxFactory.EndOfLine(text);
@@ -133,21 +151,14 @@ namespace Microsoft.CodeAnalysis.CSharp.CodeGeneration
         }
 
         internal static SyntaxTokenList GetParameterModifiers(RefKind refKind)
-        {
-            switch (refKind)
+            => refKind switch
             {
-                case RefKind.None:
-                    return new SyntaxTokenList();
-                case RefKind.Out:
-                    return SyntaxFactory.TokenList(SyntaxFactory.Token(SyntaxKind.OutKeyword));
-                case RefKind.Ref:
-                    return SyntaxFactory.TokenList(SyntaxFactory.Token(SyntaxKind.RefKeyword));
-                case RefKind.In:
-                    return SyntaxFactory.TokenList(SyntaxFactory.Token(SyntaxKind.InKeyword));
-                default:
-                    throw ExceptionUtilities.UnexpectedValue(refKind);
-            }
-        }
+                RefKind.None => new SyntaxTokenList(),
+                RefKind.Out => SyntaxFactory.TokenList(SyntaxFactory.Token(SyntaxKind.OutKeyword)),
+                RefKind.Ref => SyntaxFactory.TokenList(SyntaxFactory.Token(SyntaxKind.RefKeyword)),
+                RefKind.In => SyntaxFactory.TokenList(SyntaxFactory.Token(SyntaxKind.InKeyword)),
+                _ => throw ExceptionUtilities.UnexpectedValue(refKind),
+            };
 
         internal static SyntaxToken GetArgumentModifiers(RefKind refKind)
         {
@@ -174,7 +185,7 @@ namespace Microsoft.CodeAnalysis.CSharp.CodeGeneration
             DeclarationModifiers modifiers,
             IEnumerable<SyntaxNode> statements)
         {
-            bool hasBody = !modifiers.IsAbstract && (!modifiers.IsPartial || statements != null);
+            var hasBody = !modifiers.IsAbstract && (!modifiers.IsPartial || statements != null);
 
             return SyntaxFactory.MethodDeclaration(
                 attributeLists: default,
@@ -218,39 +229,36 @@ namespace Microsoft.CodeAnalysis.CSharp.CodeGeneration
         }
 
         private static SyntaxKind GetTokenKind(OperatorKind kind)
-        {
-            switch (kind)
+            => kind switch
             {
-                case OperatorKind.ImplicitConversion: return SyntaxKind.ImplicitKeyword;
-                case OperatorKind.ExplicitConversion: return SyntaxKind.ExplicitKeyword;
-                case OperatorKind.Addition: return SyntaxKind.PlusToken;
-                case OperatorKind.BitwiseAnd: return SyntaxKind.AmpersandToken;
-                case OperatorKind.BitwiseOr: return SyntaxKind.BarToken;
-                case OperatorKind.Decrement: return SyntaxKind.MinusMinusToken;
-                case OperatorKind.Division: return SyntaxKind.SlashToken;
-                case OperatorKind.Equality: return SyntaxKind.EqualsEqualsToken;
-                case OperatorKind.ExclusiveOr: return SyntaxKind.CaretToken;
-                case OperatorKind.False: return SyntaxKind.FalseKeyword;
-                case OperatorKind.GreaterThan: return SyntaxKind.GreaterThanToken;
-                case OperatorKind.GreaterThanOrEqual: return SyntaxKind.GreaterThanEqualsToken;
-                case OperatorKind.Increment: return SyntaxKind.PlusPlusToken;
-                case OperatorKind.Inequality: return SyntaxKind.ExclamationEqualsToken;
-                case OperatorKind.LeftShift: return SyntaxKind.LessThanLessThanToken;
-                case OperatorKind.LessThan: return SyntaxKind.LessThanToken;
-                case OperatorKind.LessThanOrEqual: return SyntaxKind.LessThanEqualsToken;
-                case OperatorKind.LogicalNot: return SyntaxKind.ExclamationToken;
-                case OperatorKind.Modulus: return SyntaxKind.PercentToken;
-                case OperatorKind.Multiply: return SyntaxKind.AsteriskToken;
-                case OperatorKind.OnesComplement: return SyntaxKind.TildeToken;
-                case OperatorKind.RightShift: return SyntaxKind.GreaterThanGreaterThanToken;
-                case OperatorKind.Subtraction: return SyntaxKind.MinusToken;
-                case OperatorKind.True: return SyntaxKind.TrueKeyword;
-                case OperatorKind.UnaryNegation: return SyntaxKind.MinusToken;
-                case OperatorKind.UnaryPlus: return SyntaxKind.PlusToken;
-                default:
-                    throw new ArgumentException("Unknown operator kind.");
-            }
-        }
+                OperatorKind.ImplicitConversion => SyntaxKind.ImplicitKeyword,
+                OperatorKind.ExplicitConversion => SyntaxKind.ExplicitKeyword,
+                OperatorKind.Addition => SyntaxKind.PlusToken,
+                OperatorKind.BitwiseAnd => SyntaxKind.AmpersandToken,
+                OperatorKind.BitwiseOr => SyntaxKind.BarToken,
+                OperatorKind.Decrement => SyntaxKind.MinusMinusToken,
+                OperatorKind.Division => SyntaxKind.SlashToken,
+                OperatorKind.Equality => SyntaxKind.EqualsEqualsToken,
+                OperatorKind.ExclusiveOr => SyntaxKind.CaretToken,
+                OperatorKind.False => SyntaxKind.FalseKeyword,
+                OperatorKind.GreaterThan => SyntaxKind.GreaterThanToken,
+                OperatorKind.GreaterThanOrEqual => SyntaxKind.GreaterThanEqualsToken,
+                OperatorKind.Increment => SyntaxKind.PlusPlusToken,
+                OperatorKind.Inequality => SyntaxKind.ExclamationEqualsToken,
+                OperatorKind.LeftShift => SyntaxKind.LessThanLessThanToken,
+                OperatorKind.LessThan => SyntaxKind.LessThanToken,
+                OperatorKind.LessThanOrEqual => SyntaxKind.LessThanEqualsToken,
+                OperatorKind.LogicalNot => SyntaxKind.ExclamationToken,
+                OperatorKind.Modulus => SyntaxKind.PercentToken,
+                OperatorKind.Multiply => SyntaxKind.AsteriskToken,
+                OperatorKind.OnesComplement => SyntaxKind.TildeToken,
+                OperatorKind.RightShift => SyntaxKind.GreaterThanGreaterThanToken,
+                OperatorKind.Subtraction => SyntaxKind.MinusToken,
+                OperatorKind.True => SyntaxKind.TrueKeyword,
+                OperatorKind.UnaryNegation => SyntaxKind.MinusToken,
+                OperatorKind.UnaryPlus => SyntaxKind.PlusToken,
+                _ => throw new ArgumentException("Unknown operator kind."),
+            };
 
         private static ParameterListSyntax AsParameterList(IEnumerable<SyntaxNode> parameters)
         {
@@ -293,36 +301,20 @@ namespace Microsoft.CodeAnalysis.CSharp.CodeGeneration
                 getAccessorStatements = null;
                 setAccessorStatements = null;
             }
-            else
-            {
-                if (getAccessorStatements == null && hasGetter)
-                {
-                    getAccessorStatements = SpecializedCollections.EmptyEnumerable<SyntaxNode>();
-                }
-
-                if (setAccessorStatements == null && hasSetter)
-                {
-                    setAccessorStatements = SpecializedCollections.EmptyEnumerable<SyntaxNode>();
-                }
-            }
 
             if (hasGetter)
-            {
                 accessors.Add(AccessorDeclaration(SyntaxKind.GetAccessorDeclaration, getAccessorStatements));
-            }
 
             if (hasSetter)
-            {
                 accessors.Add(AccessorDeclaration(SyntaxKind.SetAccessorDeclaration, setAccessorStatements));
-            }
 
             var actualModifiers = modifiers - (DeclarationModifiers.ReadOnly | DeclarationModifiers.WriteOnly);
 
             return SyntaxFactory.PropertyDeclaration(
-                default,
+                attributeLists: default,
                 AsModifierList(accessibility, actualModifiers, SyntaxKind.PropertyDeclaration),
                 (TypeSyntax)type,
-                default,
+                explicitInterfaceSpecifier: default,
                 name.ToIdentifierToken(),
                 SyntaxFactory.AccessorList(SyntaxFactory.List(accessors)));
         }
@@ -348,22 +340,18 @@ namespace Microsoft.CodeAnalysis.CSharp.CodeGeneration
         }
 
         public override SyntaxNode WithAccessorDeclarations(SyntaxNode declaration, IEnumerable<SyntaxNode> accessorDeclarations)
-        {
-            switch (declaration)
+            => declaration switch
             {
-                case PropertyDeclarationSyntax property:
-                    return property.WithAccessorList(CreateAccessorList(property.AccessorList, accessorDeclarations))
-                                   .WithExpressionBody(null)
-                                   .WithSemicolonToken(default);
-
-                case IndexerDeclarationSyntax indexer:
-                    return indexer.WithAccessorList(CreateAccessorList(indexer.AccessorList, accessorDeclarations))
+                PropertyDeclarationSyntax property => property.WithAccessorList(CreateAccessorList(property.AccessorList, accessorDeclarations))
                                   .WithExpressionBody(null)
-                                  .WithSemicolonToken(default);
-            }
+                                  .WithSemicolonToken(default),
 
-            return declaration;
-        }
+                IndexerDeclarationSyntax indexer => indexer.WithAccessorList(CreateAccessorList(indexer.AccessorList, accessorDeclarations))
+                                  .WithExpressionBody(null)
+                                  .WithSemicolonToken(default),
+
+                _ => declaration,
+            };
 
         private AccessorListSyntax CreateAccessorList(AccessorListSyntax accessorListOpt, IEnumerable<SyntaxNode> accessorDeclarations)
         {
@@ -535,9 +523,8 @@ namespace Microsoft.CodeAnalysis.CSharp.CodeGeneration
 
         private SyntaxNode WithoutConstraints(SyntaxNode declaration)
         {
-            if (declaration.IsKind(SyntaxKind.MethodDeclaration))
+            if (declaration.IsKind(SyntaxKind.MethodDeclaration, out MethodDeclarationSyntax method))
             {
-                var method = (MethodDeclarationSyntax)declaration;
                 if (method.ConstraintClauses.Count > 0)
                 {
                     return this.RemoveNodes(method, method.ConstraintClauses);
@@ -548,21 +535,14 @@ namespace Microsoft.CodeAnalysis.CSharp.CodeGeneration
         }
 
         private static SyntaxNode WithInterfaceSpecifier(SyntaxNode declaration, ExplicitInterfaceSpecifierSyntax specifier)
-        {
-            switch (declaration.Kind())
+            => declaration.Kind() switch
             {
-                case SyntaxKind.MethodDeclaration:
-                    return ((MethodDeclarationSyntax)declaration).WithExplicitInterfaceSpecifier(specifier);
-                case SyntaxKind.PropertyDeclaration:
-                    return ((PropertyDeclarationSyntax)declaration).WithExplicitInterfaceSpecifier(specifier);
-                case SyntaxKind.IndexerDeclaration:
-                    return ((IndexerDeclarationSyntax)declaration).WithExplicitInterfaceSpecifier(specifier);
-                case SyntaxKind.EventDeclaration:
-                    return ((EventDeclarationSyntax)declaration).WithExplicitInterfaceSpecifier(specifier);
-                default:
-                    return declaration;
-            }
-        }
+                SyntaxKind.MethodDeclaration => ((MethodDeclarationSyntax)declaration).WithExplicitInterfaceSpecifier(specifier),
+                SyntaxKind.PropertyDeclaration => ((PropertyDeclarationSyntax)declaration).WithExplicitInterfaceSpecifier(specifier),
+                SyntaxKind.IndexerDeclaration => ((IndexerDeclarationSyntax)declaration).WithExplicitInterfaceSpecifier(specifier),
+                SyntaxKind.EventDeclaration => ((EventDeclarationSyntax)declaration).WithExplicitInterfaceSpecifier(specifier),
+                _ => declaration,
+            };
 
         private SyntaxNode AsImplementation(SyntaxNode declaration, Accessibility requiredAccess)
         {
@@ -946,8 +926,8 @@ namespace Microsoft.CodeAnalysis.CSharp.CodeGeneration
         {
             if (!s_declAttributes.TryGetValue(declaration, out var attrs))
             {
-                var tmp = Flatten(GetAttributeLists(declaration).Where(al => !IsReturnAttribute(al)).ToImmutableReadOnlyListOrEmpty());
-                attrs = s_declAttributes.GetValue(declaration, _d => tmp);
+                attrs = s_declAttributes.GetValue(declaration, declaration =>
+                    Flatten(declaration.GetAttributeLists().Where(al => !IsReturnAttribute(al))));
             }
 
             return attrs;
@@ -960,8 +940,8 @@ namespace Microsoft.CodeAnalysis.CSharp.CodeGeneration
         {
             if (!s_declReturnAttributes.TryGetValue(declaration, out var attrs))
             {
-                var tmp = Flatten(GetAttributeLists(declaration).Where(al => IsReturnAttribute(al)).ToImmutableReadOnlyListOrEmpty());
-                attrs = s_declReturnAttributes.GetValue(declaration, _d => tmp);
+                attrs = s_declReturnAttributes.GetValue(declaration, declaration =>
+                    Flatten(declaration.GetAttributeLists().Where(al => IsReturnAttribute(al))));
             }
 
             return attrs;
@@ -992,7 +972,7 @@ namespace Microsoft.CodeAnalysis.CSharp.CodeGeneration
             }
             else
             {
-                var lists = GetAttributeLists(declaration);
+                var lists = declaration.GetAttributeLists();
                 var newList = lists.AddRange(newAttributes);
                 return WithAttributeLists(declaration, newList);
             }
@@ -1027,7 +1007,7 @@ namespace Microsoft.CodeAnalysis.CSharp.CodeGeneration
             }
             else
             {
-                var lists = GetAttributeLists(d);
+                var lists = d.GetAttributeLists();
                 var newList = lists.AddRange(newAttributes);
                 return WithAttributeLists(d, newList);
             }
@@ -1131,99 +1111,27 @@ namespace Microsoft.CodeAnalysis.CSharp.CodeGeneration
             return declaration;
         }
 
-        private static SyntaxList<AttributeListSyntax> GetAttributeLists(SyntaxNode declaration)
-        {
-            switch (declaration.Kind())
+        internal static SyntaxList<AttributeListSyntax> GetAttributeLists(SyntaxNode declaration)
+            => declaration switch
             {
-                case SyntaxKind.ClassDeclaration:
-                    return ((ClassDeclarationSyntax)declaration).AttributeLists;
-                case SyntaxKind.StructDeclaration:
-                    return ((StructDeclarationSyntax)declaration).AttributeLists;
-                case SyntaxKind.InterfaceDeclaration:
-                    return ((InterfaceDeclarationSyntax)declaration).AttributeLists;
-                case SyntaxKind.EnumDeclaration:
-                    return ((EnumDeclarationSyntax)declaration).AttributeLists;
-                case SyntaxKind.DelegateDeclaration:
-                    return ((DelegateDeclarationSyntax)declaration).AttributeLists;
-                case SyntaxKind.MethodDeclaration:
-                    return ((MethodDeclarationSyntax)declaration).AttributeLists;
-                case SyntaxKind.OperatorDeclaration:
-                    return ((OperatorDeclarationSyntax)declaration).AttributeLists;
-                case SyntaxKind.ConversionOperatorDeclaration:
-                    return ((ConversionOperatorDeclarationSyntax)declaration).AttributeLists;
-                case SyntaxKind.ConstructorDeclaration:
-                    return ((ConstructorDeclarationSyntax)declaration).AttributeLists;
-                case SyntaxKind.DestructorDeclaration:
-                    return ((DestructorDeclarationSyntax)declaration).AttributeLists;
-                case SyntaxKind.FieldDeclaration:
-                    return ((FieldDeclarationSyntax)declaration).AttributeLists;
-                case SyntaxKind.PropertyDeclaration:
-                    return ((PropertyDeclarationSyntax)declaration).AttributeLists;
-                case SyntaxKind.EventFieldDeclaration:
-                    return ((EventFieldDeclarationSyntax)declaration).AttributeLists;
-                case SyntaxKind.EventDeclaration:
-                    return ((EventDeclarationSyntax)declaration).AttributeLists;
-                case SyntaxKind.Parameter:
-                    return ((ParameterSyntax)declaration).AttributeLists;
-                case SyntaxKind.AddAccessorDeclaration:
-                case SyntaxKind.GetAccessorDeclaration:
-                case SyntaxKind.SetAccessorDeclaration:
-                case SyntaxKind.RemoveAccessorDeclaration:
-                    return ((AccessorDeclarationSyntax)declaration).AttributeLists;
-                case SyntaxKind.CompilationUnit:
-                    return ((CompilationUnitSyntax)declaration).AttributeLists;
-                default:
-                    return default;
-            }
-        }
+                MemberDeclarationSyntax memberDecl => memberDecl.AttributeLists,
+                AccessorDeclarationSyntax accessor => accessor.AttributeLists,
+                ParameterSyntax parameter => parameter.AttributeLists,
+                CompilationUnitSyntax compilationUnit => compilationUnit.AttributeLists,
+                StatementSyntax statement => statement.AttributeLists,
+                _ => default,
+            };
 
         private static SyntaxNode WithAttributeLists(SyntaxNode declaration, SyntaxList<AttributeListSyntax> attributeLists)
-        {
-            switch (declaration.Kind())
+            => declaration switch
             {
-                case SyntaxKind.ClassDeclaration:
-                    return ((ClassDeclarationSyntax)declaration).WithAttributeLists(attributeLists);
-                case SyntaxKind.StructDeclaration:
-                    return ((StructDeclarationSyntax)declaration).WithAttributeLists(attributeLists);
-                case SyntaxKind.InterfaceDeclaration:
-                    return ((InterfaceDeclarationSyntax)declaration).WithAttributeLists(attributeLists);
-                case SyntaxKind.EnumDeclaration:
-                    return ((EnumDeclarationSyntax)declaration).WithAttributeLists(attributeLists);
-                case SyntaxKind.DelegateDeclaration:
-                    return ((DelegateDeclarationSyntax)declaration).WithAttributeLists(attributeLists);
-                case SyntaxKind.MethodDeclaration:
-                    return ((MethodDeclarationSyntax)declaration).WithAttributeLists(attributeLists);
-                case SyntaxKind.OperatorDeclaration:
-                    return ((OperatorDeclarationSyntax)declaration).WithAttributeLists(attributeLists);
-                case SyntaxKind.ConversionOperatorDeclaration:
-                    return ((ConversionOperatorDeclarationSyntax)declaration).WithAttributeLists(attributeLists);
-                case SyntaxKind.ConstructorDeclaration:
-                    return ((ConstructorDeclarationSyntax)declaration).WithAttributeLists(attributeLists);
-                case SyntaxKind.DestructorDeclaration:
-                    return ((DestructorDeclarationSyntax)declaration).WithAttributeLists(attributeLists);
-                case SyntaxKind.FieldDeclaration:
-                    return ((FieldDeclarationSyntax)declaration).WithAttributeLists(attributeLists);
-                case SyntaxKind.PropertyDeclaration:
-                    return ((PropertyDeclarationSyntax)declaration).WithAttributeLists(attributeLists);
-                case SyntaxKind.IndexerDeclaration:
-                    return ((IndexerDeclarationSyntax)declaration).WithAttributeLists(attributeLists);
-                case SyntaxKind.EventFieldDeclaration:
-                    return ((EventFieldDeclarationSyntax)declaration).WithAttributeLists(attributeLists);
-                case SyntaxKind.EventDeclaration:
-                    return ((EventDeclarationSyntax)declaration).WithAttributeLists(attributeLists);
-                case SyntaxKind.Parameter:
-                    return ((ParameterSyntax)declaration).WithAttributeLists(attributeLists);
-                case SyntaxKind.AddAccessorDeclaration:
-                case SyntaxKind.GetAccessorDeclaration:
-                case SyntaxKind.SetAccessorDeclaration:
-                case SyntaxKind.RemoveAccessorDeclaration:
-                    return ((AccessorDeclarationSyntax)declaration).WithAttributeLists(attributeLists);
-                case SyntaxKind.CompilationUnit:
-                    return ((CompilationUnitSyntax)declaration).WithAttributeLists(AsAssemblyAttributes(attributeLists));
-                default:
-                    return declaration;
-            }
-        }
+                MemberDeclarationSyntax memberDecl => memberDecl.WithAttributeLists(attributeLists),
+                AccessorDeclarationSyntax accessor => accessor.WithAttributeLists(attributeLists),
+                ParameterSyntax parameter => parameter.WithAttributeLists(attributeLists),
+                CompilationUnitSyntax compilationUnit => compilationUnit.WithAttributeLists(AsAssemblyAttributes(attributeLists)),
+                StatementSyntax statement => statement.WithAttributeLists(attributeLists),
+                _ => declaration,
+            };
 
         internal override ImmutableArray<SyntaxNode> GetTypeInheritance(SyntaxNode declaration)
             => declaration is BaseTypeDeclarationSyntax baseType && baseType.BaseList != null
@@ -1231,17 +1139,12 @@ namespace Microsoft.CodeAnalysis.CSharp.CodeGeneration
                 : ImmutableArray<SyntaxNode>.Empty;
 
         public override IReadOnlyList<SyntaxNode> GetNamespaceImports(SyntaxNode declaration)
-        {
-            switch (declaration.Kind())
+            => declaration.Kind() switch
             {
-                case SyntaxKind.CompilationUnit:
-                    return ((CompilationUnitSyntax)declaration).Usings;
-                case SyntaxKind.NamespaceDeclaration:
-                    return ((NamespaceDeclarationSyntax)declaration).Usings;
-                default:
-                    return SpecializedCollections.EmptyReadOnlyList<SyntaxNode>();
-            }
-        }
+                SyntaxKind.CompilationUnit => ((CompilationUnitSyntax)declaration).Usings,
+                SyntaxKind.NamespaceDeclaration => ((NamespaceDeclarationSyntax)declaration).Usings,
+                _ => SpecializedCollections.EmptyReadOnlyList<SyntaxNode>(),
+            };
 
         public override SyntaxNode InsertNamespaceImports(SyntaxNode declaration, int index, IEnumerable<SyntaxNode> imports)
         {
@@ -1250,7 +1153,7 @@ namespace Microsoft.CodeAnalysis.CSharp.CodeGeneration
 
         private SyntaxNode InsertNamespaceImportsInternal(SyntaxNode declaration, int index, IEnumerable<SyntaxNode> imports)
         {
-            SyntaxList<UsingDirectiveSyntax> usingsToInsert = this.AsUsingDirectives(imports);
+            var usingsToInsert = this.AsUsingDirectives(imports);
 
             switch (declaration.Kind())
             {
@@ -1267,105 +1170,85 @@ namespace Microsoft.CodeAnalysis.CSharp.CodeGeneration
 
         public override IReadOnlyList<SyntaxNode> GetMembers(SyntaxNode declaration)
         {
-            return Flatten(GetUnflattenedMembers(declaration));
+            return Flatten(declaration.Kind() switch
+            {
+                SyntaxKind.ClassDeclaration => ((ClassDeclarationSyntax)declaration).Members,
+                SyntaxKind.StructDeclaration => ((StructDeclarationSyntax)declaration).Members,
+                SyntaxKind.InterfaceDeclaration => ((InterfaceDeclarationSyntax)declaration).Members,
+                SyntaxKind.EnumDeclaration => ((EnumDeclarationSyntax)declaration).Members,
+                SyntaxKind.NamespaceDeclaration => ((NamespaceDeclarationSyntax)declaration).Members,
+                SyntaxKind.CompilationUnit => ((CompilationUnitSyntax)declaration).Members,
+                _ => SpecializedCollections.EmptyReadOnlyList<SyntaxNode>(),
+            });
         }
 
-        private static IReadOnlyList<SyntaxNode> GetUnflattenedMembers(SyntaxNode declaration)
+        private static ImmutableArray<SyntaxNode> Flatten(IEnumerable<SyntaxNode> declarations)
         {
-            switch (declaration.Kind())
-            {
-                case SyntaxKind.ClassDeclaration:
-                    return ((ClassDeclarationSyntax)declaration).Members;
-                case SyntaxKind.StructDeclaration:
-                    return ((StructDeclarationSyntax)declaration).Members;
-                case SyntaxKind.InterfaceDeclaration:
-                    return ((InterfaceDeclarationSyntax)declaration).Members;
-                case SyntaxKind.EnumDeclaration:
-                    return ((EnumDeclarationSyntax)declaration).Members;
-                case SyntaxKind.NamespaceDeclaration:
-                    return ((NamespaceDeclarationSyntax)declaration).Members;
-                case SyntaxKind.CompilationUnit:
-                    return ((CompilationUnitSyntax)declaration).Members;
-                default:
-                    return SpecializedCollections.EmptyReadOnlyList<SyntaxNode>();
-            }
-        }
+            var builder = ArrayBuilder<SyntaxNode>.GetInstance();
 
-        private static IReadOnlyList<SyntaxNode> Flatten(IReadOnlyList<SyntaxNode> members)
-        {
-            if (members.Count == 0 || !members.Any(m => GetDeclarationCount(m) > 1))
-            {
-                return members;
-            }
-
-            var list = new List<SyntaxNode>();
-
-            foreach (var declaration in members)
+            foreach (var declaration in declarations)
             {
                 switch (declaration.Kind())
                 {
                     case SyntaxKind.FieldDeclaration:
-                        Flatten(declaration, ((FieldDeclarationSyntax)declaration).Declaration, list);
+                        FlattenDeclaration(builder, declaration, ((FieldDeclarationSyntax)declaration).Declaration);
                         break;
+
                     case SyntaxKind.EventFieldDeclaration:
-                        Flatten(declaration, ((EventFieldDeclarationSyntax)declaration).Declaration, list);
+                        FlattenDeclaration(builder, declaration, ((EventFieldDeclarationSyntax)declaration).Declaration);
                         break;
+
                     case SyntaxKind.LocalDeclarationStatement:
-                        Flatten(declaration, ((LocalDeclarationStatementSyntax)declaration).Declaration, list);
+                        FlattenDeclaration(builder, declaration, ((LocalDeclarationStatementSyntax)declaration).Declaration);
                         break;
+
                     case SyntaxKind.VariableDeclaration:
-                        Flatten(declaration, (VariableDeclarationSyntax)declaration, list);
+                        FlattenDeclaration(builder, declaration, (VariableDeclarationSyntax)declaration);
                         break;
+
                     case SyntaxKind.AttributeList:
                         var attrList = (AttributeListSyntax)declaration;
                         if (attrList.Attributes.Count > 1)
                         {
-                            list.AddRange(attrList.Attributes);
+                            builder.AddRange(attrList.Attributes);
                         }
                         else
                         {
-                            list.Add(attrList);
+                            builder.Add(attrList);
                         }
                         break;
+
                     default:
-                        list.Add(declaration);
+                        builder.Add(declaration);
                         break;
                 }
             }
 
-            return list.ToImmutableReadOnlyListOrEmpty();
+            return builder.ToImmutableAndFree();
+
+            static void FlattenDeclaration(ArrayBuilder<SyntaxNode> builder, SyntaxNode declaration, VariableDeclarationSyntax variableDeclaration)
+            {
+                if (variableDeclaration.Variables.Count > 1)
+                {
+                    builder.AddRange(variableDeclaration.Variables);
+                }
+                else
+                {
+                    builder.Add(declaration);
+                }
+            }
         }
 
         private static int GetDeclarationCount(SyntaxNode declaration)
-        {
-            switch (declaration.Kind())
+            => declaration.Kind() switch
             {
-                case SyntaxKind.FieldDeclaration:
-                    return ((FieldDeclarationSyntax)declaration).Declaration.Variables.Count;
-                case SyntaxKind.EventFieldDeclaration:
-                    return ((EventFieldDeclarationSyntax)declaration).Declaration.Variables.Count;
-                case SyntaxKind.LocalDeclarationStatement:
-                    return ((LocalDeclarationStatementSyntax)declaration).Declaration.Variables.Count;
-                case SyntaxKind.VariableDeclaration:
-                    return ((VariableDeclarationSyntax)declaration).Variables.Count;
-                case SyntaxKind.AttributeList:
-                    return ((AttributeListSyntax)declaration).Attributes.Count;
-                default:
-                    return 1;
-            }
-        }
-
-        private static void Flatten(SyntaxNode declaration, VariableDeclarationSyntax vd, List<SyntaxNode> flat)
-        {
-            if (vd.Variables.Count > 1)
-            {
-                flat.AddRange(vd.Variables);
-            }
-            else
-            {
-                flat.Add(declaration);
-            }
-        }
+                SyntaxKind.FieldDeclaration => ((FieldDeclarationSyntax)declaration).Declaration.Variables.Count,
+                SyntaxKind.EventFieldDeclaration => ((EventFieldDeclarationSyntax)declaration).Declaration.Variables.Count,
+                SyntaxKind.LocalDeclarationStatement => ((LocalDeclarationStatementSyntax)declaration).Declaration.Variables.Count,
+                SyntaxKind.VariableDeclaration => ((VariableDeclarationSyntax)declaration).Variables.Count,
+                SyntaxKind.AttributeList => ((AttributeListSyntax)declaration).Attributes.Count,
+                _ => 1,
+            };
 
         public override SyntaxNode InsertMembers(SyntaxNode declaration, int index, IEnumerable<SyntaxNode> members)
         {
@@ -1502,7 +1385,7 @@ namespace Microsoft.CodeAnalysis.CSharp.CodeGeneration
             }
 
             var modifierTokens = GetModifierTokens(declaration);
-            GetAccessibilityAndModifiers(modifierTokens, out var accessibility, out var modifiers);
+            GetAccessibilityAndModifiers(modifierTokens, out var accessibility, out _);
             return accessibility;
         }
 
@@ -1523,19 +1406,94 @@ namespace Microsoft.CodeAnalysis.CSharp.CodeGeneration
             });
         }
 
-        private static readonly DeclarationModifiers s_fieldModifiers = DeclarationModifiers.Const | DeclarationModifiers.New | DeclarationModifiers.ReadOnly | DeclarationModifiers.Static | DeclarationModifiers.Unsafe;
-        private static readonly DeclarationModifiers s_methodModifiers = DeclarationModifiers.Abstract | DeclarationModifiers.Async | DeclarationModifiers.New | DeclarationModifiers.Override | DeclarationModifiers.Partial | DeclarationModifiers.Sealed | DeclarationModifiers.Static | DeclarationModifiers.Virtual | DeclarationModifiers.Unsafe;
-        private static readonly DeclarationModifiers s_constructorModifiers = DeclarationModifiers.Static | DeclarationModifiers.Unsafe;
+        private static readonly DeclarationModifiers s_fieldModifiers =
+            DeclarationModifiers.Const |
+            DeclarationModifiers.New |
+            DeclarationModifiers.ReadOnly |
+            DeclarationModifiers.Static |
+            DeclarationModifiers.Unsafe |
+            DeclarationModifiers.Volatile;
+
+        private static readonly DeclarationModifiers s_methodModifiers =
+            DeclarationModifiers.Abstract |
+            DeclarationModifiers.Async |
+            DeclarationModifiers.Extern |
+            DeclarationModifiers.New |
+            DeclarationModifiers.Override |
+            DeclarationModifiers.Partial |
+            DeclarationModifiers.ReadOnly |
+            DeclarationModifiers.Sealed |
+            DeclarationModifiers.Static |
+            DeclarationModifiers.Virtual |
+            DeclarationModifiers.Unsafe;
+
+        private static readonly DeclarationModifiers s_constructorModifiers =
+            DeclarationModifiers.Extern |
+            DeclarationModifiers.Static |
+            DeclarationModifiers.Unsafe;
+
         private static readonly DeclarationModifiers s_destructorModifiers = DeclarationModifiers.Unsafe;
-        private static readonly DeclarationModifiers s_propertyModifiers = DeclarationModifiers.Abstract | DeclarationModifiers.New | DeclarationModifiers.Override | DeclarationModifiers.ReadOnly | DeclarationModifiers.Sealed | DeclarationModifiers.Static | DeclarationModifiers.Virtual | DeclarationModifiers.Unsafe;
-        private static readonly DeclarationModifiers s_eventModifiers = DeclarationModifiers.Abstract | DeclarationModifiers.New | DeclarationModifiers.Override | DeclarationModifiers.Sealed | DeclarationModifiers.Static | DeclarationModifiers.Virtual | DeclarationModifiers.Unsafe;
-        private static readonly DeclarationModifiers s_eventFieldModifiers = DeclarationModifiers.New | DeclarationModifiers.Static | DeclarationModifiers.Unsafe;
-        private static readonly DeclarationModifiers s_indexerModifiers = DeclarationModifiers.Abstract | DeclarationModifiers.New | DeclarationModifiers.Override | DeclarationModifiers.ReadOnly | DeclarationModifiers.Sealed | DeclarationModifiers.Static | DeclarationModifiers.Virtual | DeclarationModifiers.Unsafe;
-        private static readonly DeclarationModifiers s_classModifiers = DeclarationModifiers.Abstract | DeclarationModifiers.New | DeclarationModifiers.Partial | DeclarationModifiers.Sealed | DeclarationModifiers.Static | DeclarationModifiers.Unsafe;
-        private static readonly DeclarationModifiers s_structModifiers = DeclarationModifiers.New | DeclarationModifiers.Partial | DeclarationModifiers.ReadOnly | DeclarationModifiers.Ref | DeclarationModifiers.Unsafe;
+        private static readonly DeclarationModifiers s_propertyModifiers =
+            DeclarationModifiers.Abstract |
+            DeclarationModifiers.Extern |
+            DeclarationModifiers.New |
+            DeclarationModifiers.Override |
+            DeclarationModifiers.ReadOnly |
+            DeclarationModifiers.Sealed |
+            DeclarationModifiers.Static |
+            DeclarationModifiers.Virtual |
+            DeclarationModifiers.Unsafe;
+
+        private static readonly DeclarationModifiers s_eventModifiers =
+            DeclarationModifiers.Abstract |
+            DeclarationModifiers.Extern |
+            DeclarationModifiers.New |
+            DeclarationModifiers.Override |
+            DeclarationModifiers.ReadOnly |
+            DeclarationModifiers.Sealed |
+            DeclarationModifiers.Static |
+            DeclarationModifiers.Virtual |
+            DeclarationModifiers.Unsafe;
+
+        private static readonly DeclarationModifiers s_eventFieldModifiers =
+            DeclarationModifiers.New |
+            DeclarationModifiers.ReadOnly |
+            DeclarationModifiers.Static |
+            DeclarationModifiers.Unsafe;
+
+        private static readonly DeclarationModifiers s_indexerModifiers =
+            DeclarationModifiers.Abstract |
+            DeclarationModifiers.Extern |
+            DeclarationModifiers.New |
+            DeclarationModifiers.Override |
+            DeclarationModifiers.ReadOnly |
+            DeclarationModifiers.Sealed |
+            DeclarationModifiers.Static |
+            DeclarationModifiers.Virtual |
+            DeclarationModifiers.Unsafe;
+
+        private static readonly DeclarationModifiers s_classModifiers =
+            DeclarationModifiers.Abstract |
+            DeclarationModifiers.New |
+            DeclarationModifiers.Partial |
+            DeclarationModifiers.Sealed |
+            DeclarationModifiers.Static |
+            DeclarationModifiers.Unsafe;
+
+        private static readonly DeclarationModifiers s_structModifiers =
+            DeclarationModifiers.New |
+            DeclarationModifiers.Partial |
+            DeclarationModifiers.ReadOnly |
+            DeclarationModifiers.Ref |
+            DeclarationModifiers.Unsafe;
+
         private static readonly DeclarationModifiers s_interfaceModifiers = DeclarationModifiers.New | DeclarationModifiers.Partial | DeclarationModifiers.Unsafe;
         private static readonly DeclarationModifiers s_accessorModifiers = DeclarationModifiers.Abstract | DeclarationModifiers.New | DeclarationModifiers.Override | DeclarationModifiers.Virtual;
-        private static readonly DeclarationModifiers s_localFunctionModifiers = DeclarationModifiers.Async | DeclarationModifiers.Static;
+
+        private static readonly DeclarationModifiers s_localFunctionModifiers =
+            DeclarationModifiers.Async |
+            DeclarationModifiers.Static |
+            DeclarationModifiers.Extern;
 
         private static DeclarationModifiers GetAllowedModifiers(SyntaxKind kind)
         {
@@ -1602,7 +1560,7 @@ namespace Microsoft.CodeAnalysis.CSharp.CodeGeneration
         public override DeclarationModifiers GetModifiers(SyntaxNode declaration)
         {
             var modifierTokens = GetModifierTokens(declaration);
-            GetAccessibilityAndModifiers(modifierTokens, out var accessibility, out var modifiers);
+            GetAccessibilityAndModifiers(modifierTokens, out _, out var modifiers);
             return modifiers;
         }
 
@@ -1613,7 +1571,7 @@ namespace Microsoft.CodeAnalysis.CSharp.CodeGeneration
 
         private SyntaxNode WithModifiersInternal(SyntaxNode declaration, DeclarationModifiers modifiers)
         {
-            modifiers = modifiers & GetAllowedModifiers(declaration.Kind());
+            modifiers &= GetAllowedModifiers(declaration.Kind());
             var existingModifiers = this.GetModifiers(declaration);
 
             if (modifiers != existingModifiers)
@@ -1634,111 +1592,28 @@ namespace Microsoft.CodeAnalysis.CSharp.CodeGeneration
         }
 
         private static SyntaxTokenList GetModifierTokens(SyntaxNode declaration)
-        {
-            switch (declaration.Kind())
+            => declaration switch
             {
-                case SyntaxKind.ClassDeclaration:
-                    return ((ClassDeclarationSyntax)declaration).Modifiers;
-                case SyntaxKind.StructDeclaration:
-                    return ((StructDeclarationSyntax)declaration).Modifiers;
-                case SyntaxKind.InterfaceDeclaration:
-                    return ((InterfaceDeclarationSyntax)declaration).Modifiers;
-                case SyntaxKind.EnumDeclaration:
-                    return ((EnumDeclarationSyntax)declaration).Modifiers;
-                case SyntaxKind.DelegateDeclaration:
-                    return ((DelegateDeclarationSyntax)declaration).Modifiers;
-                case SyntaxKind.MethodDeclaration:
-                    return ((MethodDeclarationSyntax)declaration).Modifiers;
-                case SyntaxKind.OperatorDeclaration:
-                    return ((OperatorDeclarationSyntax)declaration).Modifiers;
-                case SyntaxKind.ConversionOperatorDeclaration:
-                    return ((ConversionOperatorDeclarationSyntax)declaration).Modifiers;
-                case SyntaxKind.ConstructorDeclaration:
-                    return ((ConstructorDeclarationSyntax)declaration).Modifiers;
-                case SyntaxKind.DestructorDeclaration:
-                    return ((DestructorDeclarationSyntax)declaration).Modifiers;
-                case SyntaxKind.FieldDeclaration:
-                    return ((FieldDeclarationSyntax)declaration).Modifiers;
-                case SyntaxKind.PropertyDeclaration:
-                    return ((PropertyDeclarationSyntax)declaration).Modifiers;
-                case SyntaxKind.IndexerDeclaration:
-                    return ((IndexerDeclarationSyntax)declaration).Modifiers;
-                case SyntaxKind.EventFieldDeclaration:
-                    return ((EventFieldDeclarationSyntax)declaration).Modifiers;
-                case SyntaxKind.EventDeclaration:
-                    return ((EventDeclarationSyntax)declaration).Modifiers;
-                case SyntaxKind.Parameter:
-                    return ((ParameterSyntax)declaration).Modifiers;
-                case SyntaxKind.LocalDeclarationStatement:
-                    return ((LocalDeclarationStatementSyntax)declaration).Modifiers;
-                case SyntaxKind.VariableDeclaration:
-                case SyntaxKind.VariableDeclarator:
-                    if (declaration.Parent != null)
-                    {
-                        return GetModifierTokens(declaration.Parent);
-                    }
-                    break;
-                case SyntaxKind.GetAccessorDeclaration:
-                case SyntaxKind.SetAccessorDeclaration:
-                case SyntaxKind.AddAccessorDeclaration:
-                case SyntaxKind.RemoveAccessorDeclaration:
-                    return ((AccessorDeclarationSyntax)declaration).Modifiers;
-                case SyntaxKind.LocalFunctionStatement:
-                    return ((LocalFunctionStatementSyntax)declaration).Modifiers;
-            }
-
-            return default;
-        }
+                MemberDeclarationSyntax memberDecl => memberDecl.Modifiers,
+                ParameterSyntax parameter => parameter.Modifiers,
+                LocalDeclarationStatementSyntax localDecl => localDecl.Modifiers,
+                LocalFunctionStatementSyntax localFunc => localFunc.Modifiers,
+                AccessorDeclarationSyntax accessor => accessor.Modifiers,
+                VariableDeclarationSyntax varDecl => GetModifierTokens(varDecl.Parent),
+                VariableDeclaratorSyntax varDecl => GetModifierTokens(varDecl.Parent),
+                _ => default,
+            };
 
         private static SyntaxNode SetModifierTokens(SyntaxNode declaration, SyntaxTokenList modifiers)
-        {
-            switch (declaration.Kind())
+            => declaration switch
             {
-                case SyntaxKind.ClassDeclaration:
-                    return ((ClassDeclarationSyntax)declaration).WithModifiers(modifiers);
-                case SyntaxKind.StructDeclaration:
-                    return ((StructDeclarationSyntax)declaration).WithModifiers(modifiers);
-                case SyntaxKind.InterfaceDeclaration:
-                    return ((InterfaceDeclarationSyntax)declaration).WithModifiers(modifiers);
-                case SyntaxKind.EnumDeclaration:
-                    return ((EnumDeclarationSyntax)declaration).WithModifiers(modifiers);
-                case SyntaxKind.DelegateDeclaration:
-                    return ((DelegateDeclarationSyntax)declaration).WithModifiers(modifiers);
-                case SyntaxKind.MethodDeclaration:
-                    return ((MethodDeclarationSyntax)declaration).WithModifiers(modifiers);
-                case SyntaxKind.OperatorDeclaration:
-                    return ((OperatorDeclarationSyntax)declaration).WithModifiers(modifiers);
-                case SyntaxKind.ConversionOperatorDeclaration:
-                    return ((ConversionOperatorDeclarationSyntax)declaration).WithModifiers(modifiers);
-                case SyntaxKind.ConstructorDeclaration:
-                    return ((ConstructorDeclarationSyntax)declaration).WithModifiers(modifiers);
-                case SyntaxKind.DestructorDeclaration:
-                    return ((DestructorDeclarationSyntax)declaration).WithModifiers(modifiers);
-                case SyntaxKind.FieldDeclaration:
-                    return ((FieldDeclarationSyntax)declaration).WithModifiers(modifiers);
-                case SyntaxKind.PropertyDeclaration:
-                    return ((PropertyDeclarationSyntax)declaration).WithModifiers(modifiers);
-                case SyntaxKind.IndexerDeclaration:
-                    return ((IndexerDeclarationSyntax)declaration).WithModifiers(modifiers);
-                case SyntaxKind.EventFieldDeclaration:
-                    return ((EventFieldDeclarationSyntax)declaration).WithModifiers(modifiers);
-                case SyntaxKind.EventDeclaration:
-                    return ((EventDeclarationSyntax)declaration).WithModifiers(modifiers);
-                case SyntaxKind.Parameter:
-                    return ((ParameterSyntax)declaration).WithModifiers(modifiers);
-                case SyntaxKind.LocalDeclarationStatement:
-                    return ((LocalDeclarationStatementSyntax)declaration).WithModifiers(modifiers);
-                case SyntaxKind.GetAccessorDeclaration:
-                case SyntaxKind.SetAccessorDeclaration:
-                case SyntaxKind.AddAccessorDeclaration:
-                case SyntaxKind.RemoveAccessorDeclaration:
-                    return ((AccessorDeclarationSyntax)declaration).WithModifiers(modifiers);
-                case SyntaxKind.LocalFunctionStatement:
-                    return ((LocalFunctionStatementSyntax)declaration).WithModifiers(modifiers);
-                default:
-                    return declaration;
-            }
-        }
+                MemberDeclarationSyntax memberDecl => memberDecl.WithModifiers(modifiers),
+                ParameterSyntax parameter => parameter.WithModifiers(modifiers),
+                LocalDeclarationStatementSyntax localDecl => localDecl.WithModifiers(modifiers),
+                LocalFunctionStatementSyntax localFunc => localFunc.WithModifiers(modifiers),
+                AccessorDeclarationSyntax accessor => accessor.WithModifiers(modifiers),
+                _ => declaration,
+            };
 
         private static SyntaxTokenList AsModifierList(Accessibility accessibility, DeclarationModifiers modifiers, SyntaxKind kind)
         {
@@ -1747,96 +1622,78 @@ namespace Microsoft.CodeAnalysis.CSharp.CodeGeneration
 
         private static SyntaxTokenList AsModifierList(Accessibility accessibility, DeclarationModifiers modifiers)
         {
-            SyntaxTokenList list = SyntaxFactory.TokenList();
+            using var _ = ArrayBuilder<SyntaxToken>.GetInstance(out var list);
 
             switch (accessibility)
             {
                 case Accessibility.Internal:
-                    list = list.Add(SyntaxFactory.Token(SyntaxKind.InternalKeyword));
+                    list.Add(SyntaxFactory.Token(SyntaxKind.InternalKeyword));
                     break;
                 case Accessibility.Public:
-                    list = list.Add(SyntaxFactory.Token(SyntaxKind.PublicKeyword));
+                    list.Add(SyntaxFactory.Token(SyntaxKind.PublicKeyword));
                     break;
                 case Accessibility.Private:
-                    list = list.Add(SyntaxFactory.Token(SyntaxKind.PrivateKeyword));
+                    list.Add(SyntaxFactory.Token(SyntaxKind.PrivateKeyword));
                     break;
                 case Accessibility.Protected:
-                    list = list.Add(SyntaxFactory.Token(SyntaxKind.ProtectedKeyword));
+                    list.Add(SyntaxFactory.Token(SyntaxKind.ProtectedKeyword));
                     break;
                 case Accessibility.ProtectedOrInternal:
-                    list = list.Add(SyntaxFactory.Token(SyntaxKind.InternalKeyword))
-                               .Add(SyntaxFactory.Token(SyntaxKind.ProtectedKeyword));
+                    list.Add(SyntaxFactory.Token(SyntaxKind.InternalKeyword));
+                    list.Add(SyntaxFactory.Token(SyntaxKind.ProtectedKeyword));
                     break;
                 case Accessibility.ProtectedAndInternal:
-                    list = list.Add(SyntaxFactory.Token(SyntaxKind.PrivateKeyword))
-                               .Add(SyntaxFactory.Token(SyntaxKind.ProtectedKeyword));
+                    list.Add(SyntaxFactory.Token(SyntaxKind.PrivateKeyword));
+                    list.Add(SyntaxFactory.Token(SyntaxKind.ProtectedKeyword));
                     break;
                 case Accessibility.NotApplicable:
                     break;
             }
 
             if (modifiers.IsAbstract)
-            {
-                list = list.Add(SyntaxFactory.Token(SyntaxKind.AbstractKeyword));
-            }
+                list.Add(SyntaxFactory.Token(SyntaxKind.AbstractKeyword));
 
             if (modifiers.IsNew)
-            {
-                list = list.Add(SyntaxFactory.Token(SyntaxKind.NewKeyword));
-            }
+                list.Add(SyntaxFactory.Token(SyntaxKind.NewKeyword));
 
             if (modifiers.IsSealed)
-            {
-                list = list.Add(SyntaxFactory.Token(SyntaxKind.SealedKeyword));
-            }
+                list.Add(SyntaxFactory.Token(SyntaxKind.SealedKeyword));
 
             if (modifiers.IsOverride)
-            {
-                list = list.Add(SyntaxFactory.Token(SyntaxKind.OverrideKeyword));
-            }
+                list.Add(SyntaxFactory.Token(SyntaxKind.OverrideKeyword));
 
             if (modifiers.IsVirtual)
-            {
-                list = list.Add(SyntaxFactory.Token(SyntaxKind.VirtualKeyword));
-            }
+                list.Add(SyntaxFactory.Token(SyntaxKind.VirtualKeyword));
 
             if (modifiers.IsStatic)
-            {
-                list = list.Add(SyntaxFactory.Token(SyntaxKind.StaticKeyword));
-            }
+                list.Add(SyntaxFactory.Token(SyntaxKind.StaticKeyword));
 
             if (modifiers.IsAsync)
-            {
-                list = list.Add(SyntaxFactory.Token(SyntaxKind.AsyncKeyword));
-            }
+                list.Add(SyntaxFactory.Token(SyntaxKind.AsyncKeyword));
 
             if (modifiers.IsConst)
-            {
-                list = list.Add(SyntaxFactory.Token(SyntaxKind.ConstKeyword));
-            }
+                list.Add(SyntaxFactory.Token(SyntaxKind.ConstKeyword));
 
             if (modifiers.IsReadOnly)
-            {
-                list = list.Add(SyntaxFactory.Token(SyntaxKind.ReadOnlyKeyword));
-            }
+                list.Add(SyntaxFactory.Token(SyntaxKind.ReadOnlyKeyword));
 
             if (modifiers.IsUnsafe)
-            {
-                list = list.Add(SyntaxFactory.Token(SyntaxKind.UnsafeKeyword));
-            }
+                list.Add(SyntaxFactory.Token(SyntaxKind.UnsafeKeyword));
+
+            if (modifiers.IsVolatile)
+                list.Add(SyntaxFactory.Token(SyntaxKind.VolatileKeyword));
+
+            if (modifiers.IsExtern)
+                list.Add(SyntaxFactory.Token(SyntaxKind.ExternKeyword));
 
             // partial and ref must be last
             if (modifiers.IsRef)
-            {
-                list = list.Add(SyntaxFactory.Token(SyntaxKind.RefKeyword));
-            }
+                list.Add(SyntaxFactory.Token(SyntaxKind.RefKeyword));
 
             if (modifiers.IsPartial)
-            {
-                list = list.Add(SyntaxFactory.Token(SyntaxKind.PartialKeyword));
-            }
+                list.Add(SyntaxFactory.Token(SyntaxKind.PartialKeyword));
 
-            return list;
+            return SyntaxFactory.TokenList(list);
         }
 
         private static void GetAccessibilityAndModifiers(SyntaxTokenList modifierList, out Accessibility accessibility, out DeclarationModifiers modifiers)
@@ -1846,99 +1703,41 @@ namespace Microsoft.CodeAnalysis.CSharp.CodeGeneration
 
             foreach (var token in modifierList)
             {
-                switch (token.Kind())
+                accessibility = (token.Kind(), accessibility) switch
                 {
-                    case SyntaxKind.PublicKeyword:
-                        accessibility = Accessibility.Public;
-                        break;
+                    (SyntaxKind.PublicKeyword, _) => Accessibility.Public,
 
-                    case SyntaxKind.PrivateKeyword:
-                        if (accessibility == Accessibility.Protected)
-                        {
-                            accessibility = Accessibility.ProtectedAndInternal;
-                        }
-                        else
-                        {
-                            accessibility = Accessibility.Private;
-                        }
-                        break;
+                    (SyntaxKind.PrivateKeyword, Accessibility.Protected) => Accessibility.ProtectedAndInternal,
+                    (SyntaxKind.PrivateKeyword, _) => Accessibility.Private,
 
-                    case SyntaxKind.InternalKeyword:
-                        if (accessibility == Accessibility.Protected)
-                        {
-                            accessibility = Accessibility.ProtectedOrInternal;
-                        }
-                        else
-                        {
-                            accessibility = Accessibility.Internal;
-                        }
+                    (SyntaxKind.InternalKeyword, Accessibility.Protected) => Accessibility.ProtectedOrInternal,
+                    (SyntaxKind.InternalKeyword, _) => Accessibility.Internal,
 
-                        break;
+                    (SyntaxKind.ProtectedKeyword, Accessibility.Private) => Accessibility.ProtectedAndInternal,
+                    (SyntaxKind.ProtectedKeyword, Accessibility.Internal) => Accessibility.ProtectedOrInternal,
+                    (SyntaxKind.ProtectedKeyword, _) => Accessibility.Protected,
 
-                    case SyntaxKind.ProtectedKeyword:
-                        if (accessibility == Accessibility.Private)
-                        {
-                            accessibility = Accessibility.ProtectedAndInternal;
-                        }
-                        else if (accessibility == Accessibility.Internal)
-                        {
-                            accessibility = Accessibility.ProtectedOrInternal;
-                        }
+                    _ => accessibility,
+                };
 
-                        {
-                            accessibility = Accessibility.Protected;
-                        }
-
-                        break;
-
-                    case SyntaxKind.AbstractKeyword:
-                        modifiers = modifiers | DeclarationModifiers.Abstract;
-                        break;
-
-                    case SyntaxKind.NewKeyword:
-                        modifiers = modifiers | DeclarationModifiers.New;
-                        break;
-
-                    case SyntaxKind.OverrideKeyword:
-                        modifiers = modifiers | DeclarationModifiers.Override;
-                        break;
-
-                    case SyntaxKind.VirtualKeyword:
-                        modifiers = modifiers | DeclarationModifiers.Virtual;
-                        break;
-
-                    case SyntaxKind.StaticKeyword:
-                        modifiers = modifiers | DeclarationModifiers.Static;
-                        break;
-
-                    case SyntaxKind.AsyncKeyword:
-                        modifiers = modifiers | DeclarationModifiers.Async;
-                        break;
-
-                    case SyntaxKind.ConstKeyword:
-                        modifiers = modifiers | DeclarationModifiers.Const;
-                        break;
-
-                    case SyntaxKind.ReadOnlyKeyword:
-                        modifiers = modifiers | DeclarationModifiers.ReadOnly;
-                        break;
-
-                    case SyntaxKind.SealedKeyword:
-                        modifiers = modifiers | DeclarationModifiers.Sealed;
-                        break;
-
-                    case SyntaxKind.UnsafeKeyword:
-                        modifiers = modifiers | DeclarationModifiers.Unsafe;
-                        break;
-
-                    case SyntaxKind.PartialKeyword:
-                        modifiers = modifiers | DeclarationModifiers.Partial;
-                        break;
-
-                    case SyntaxKind.RefKeyword:
-                        modifiers = modifiers | DeclarationModifiers.Ref;
-                        break;
-                }
+                modifiers |= token.Kind() switch
+                {
+                    SyntaxKind.AbstractKeyword => DeclarationModifiers.Abstract,
+                    SyntaxKind.NewKeyword => DeclarationModifiers.New,
+                    SyntaxKind.OverrideKeyword => DeclarationModifiers.Override,
+                    SyntaxKind.VirtualKeyword => DeclarationModifiers.Virtual,
+                    SyntaxKind.StaticKeyword => DeclarationModifiers.Static,
+                    SyntaxKind.AsyncKeyword => DeclarationModifiers.Async,
+                    SyntaxKind.ConstKeyword => DeclarationModifiers.Const,
+                    SyntaxKind.ReadOnlyKeyword => DeclarationModifiers.ReadOnly,
+                    SyntaxKind.SealedKeyword => DeclarationModifiers.Sealed,
+                    SyntaxKind.UnsafeKeyword => DeclarationModifiers.Unsafe,
+                    SyntaxKind.PartialKeyword => DeclarationModifiers.Partial,
+                    SyntaxKind.RefKeyword => DeclarationModifiers.Ref,
+                    SyntaxKind.VolatileKeyword => DeclarationModifiers.Volatile,
+                    SyntaxKind.ExternKeyword => DeclarationModifiers.Extern,
+                    _ => DeclarationModifiers.None,
+                };
             }
         }
 
@@ -1960,43 +1759,28 @@ namespace Microsoft.CodeAnalysis.CSharp.CodeGeneration
         {
             var typeParameters = AsTypeParameterList(typeParameterNames);
 
-            switch (declaration.Kind())
+            return declaration.Kind() switch
             {
-                case SyntaxKind.MethodDeclaration:
-                    return ((MethodDeclarationSyntax)declaration).WithTypeParameterList(typeParameters);
-
-                case SyntaxKind.ClassDeclaration:
-                    return ((ClassDeclarationSyntax)declaration).WithTypeParameterList(typeParameters);
-
-                case SyntaxKind.StructDeclaration:
-                    return ((StructDeclarationSyntax)declaration).WithTypeParameterList(typeParameters);
-
-                case SyntaxKind.InterfaceDeclaration:
-                    return ((InterfaceDeclarationSyntax)declaration).WithTypeParameterList(typeParameters);
-
-                case SyntaxKind.DelegateDeclaration:
-                    return ((DelegateDeclarationSyntax)declaration).WithTypeParameterList(typeParameters);
-                default:
-                    return declaration;
-            }
+                SyntaxKind.MethodDeclaration => ((MethodDeclarationSyntax)declaration).WithTypeParameterList(typeParameters),
+                SyntaxKind.ClassDeclaration => ((ClassDeclarationSyntax)declaration).WithTypeParameterList(typeParameters),
+                SyntaxKind.StructDeclaration => ((StructDeclarationSyntax)declaration).WithTypeParameterList(typeParameters),
+                SyntaxKind.InterfaceDeclaration => ((InterfaceDeclarationSyntax)declaration).WithTypeParameterList(typeParameters),
+                SyntaxKind.DelegateDeclaration => ((DelegateDeclarationSyntax)declaration).WithTypeParameterList(typeParameters),
+                _ => declaration,
+            };
         }
 
-        internal override SyntaxNode WithExplicitInterfaceImplementations(SyntaxNode declaration, ImmutableArray<IMethodSymbol> explicitInterfaceImplementations)
-        {
-            switch (declaration)
+        internal override SyntaxNode WithExplicitInterfaceImplementations(SyntaxNode declaration, ImmutableArray<ISymbol> explicitInterfaceImplementations)
+            => WithAccessibility(declaration switch
             {
-                case MethodDeclarationSyntax methodDeclaration:
-                    return WithAccessibility(
-                        methodDeclaration.WithExplicitInterfaceSpecifier(CreateExplicitInterfaceSpecifier(explicitInterfaceImplementations)),
-                        Accessibility.NotApplicable);
-            }
+                MethodDeclarationSyntax member => member.WithExplicitInterfaceSpecifier(CreateExplicitInterfaceSpecifier(explicitInterfaceImplementations)),
+                PropertyDeclarationSyntax member => member.WithExplicitInterfaceSpecifier(CreateExplicitInterfaceSpecifier(explicitInterfaceImplementations)),
+                EventDeclarationSyntax member => member.WithExplicitInterfaceSpecifier(CreateExplicitInterfaceSpecifier(explicitInterfaceImplementations)),
+                _ => declaration,
+            }, Accessibility.NotApplicable);
 
-            return declaration;
-        }
-
-        private ExplicitInterfaceSpecifierSyntax CreateExplicitInterfaceSpecifier(ImmutableArray<IMethodSymbol> explicitInterfaceImplementations)
-            => SyntaxFactory.ExplicitInterfaceSpecifier(
-                explicitInterfaceImplementations[0].ContainingType.GenerateNameSyntax());
+        private ExplicitInterfaceSpecifierSyntax CreateExplicitInterfaceSpecifier(ImmutableArray<ISymbol> explicitInterfaceImplementations)
+            => SyntaxFactory.ExplicitInterfaceSpecifier(explicitInterfaceImplementations[0].ContainingType.GenerateNameSyntax());
 
         public override SyntaxNode WithTypeConstraint(SyntaxNode declaration, string typeParameterName, SpecialTypeConstraintKind kinds, IEnumerable<SyntaxNode> types)
         {
@@ -2198,8 +1982,7 @@ namespace Microsoft.CodeAnalysis.CSharp.CodeGeneration
                     break;
 
                 case SyntaxKind.Attribute:
-                    var parentList = declaration.Parent as AttributeListSyntax;
-                    if (parentList == null || parentList.Attributes.Count > 1)
+                    if (!(declaration.Parent is AttributeListSyntax parentList) || parentList.Attributes.Count > 1)
                     {
                         return DeclarationKind.Attribute;
                     }
@@ -2410,8 +2193,7 @@ namespace Microsoft.CodeAnalysis.CSharp.CodeGeneration
 
         private static TypeSyntax NotVoid(TypeSyntax type)
         {
-            var pd = type as PredefinedTypeSyntax;
-            return pd != null && pd.Keyword.IsKind(SyntaxKind.VoidKeyword) ? null : type;
+            return type is PredefinedTypeSyntax pd && pd.Keyword.IsKind(SyntaxKind.VoidKeyword) ? null : type;
         }
 
         public override SyntaxNode WithType(SyntaxNode declaration, SyntaxNode type)
@@ -2420,33 +2202,20 @@ namespace Microsoft.CodeAnalysis.CSharp.CodeGeneration
         }
 
         private static SyntaxNode WithTypeInternal(SyntaxNode declaration, SyntaxNode type)
-        {
-            switch (declaration.Kind())
+            => declaration.Kind() switch
             {
-                case SyntaxKind.DelegateDeclaration:
-                    return ((DelegateDeclarationSyntax)declaration).WithReturnType((TypeSyntax)type);
-                case SyntaxKind.MethodDeclaration:
-                    return ((MethodDeclarationSyntax)declaration).WithReturnType((TypeSyntax)type);
-                case SyntaxKind.FieldDeclaration:
-                    return ((FieldDeclarationSyntax)declaration).WithDeclaration(((FieldDeclarationSyntax)declaration).Declaration.WithType((TypeSyntax)type));
-                case SyntaxKind.PropertyDeclaration:
-                    return ((PropertyDeclarationSyntax)declaration).WithType((TypeSyntax)type);
-                case SyntaxKind.IndexerDeclaration:
-                    return ((IndexerDeclarationSyntax)declaration).WithType((TypeSyntax)type);
-                case SyntaxKind.EventFieldDeclaration:
-                    return ((EventFieldDeclarationSyntax)declaration).WithDeclaration(((EventFieldDeclarationSyntax)declaration).Declaration.WithType((TypeSyntax)type));
-                case SyntaxKind.EventDeclaration:
-                    return ((EventDeclarationSyntax)declaration).WithType((TypeSyntax)type);
-                case SyntaxKind.Parameter:
-                    return ((ParameterSyntax)declaration).WithType((TypeSyntax)type);
-                case SyntaxKind.LocalDeclarationStatement:
-                    return ((LocalDeclarationStatementSyntax)declaration).WithDeclaration(((LocalDeclarationStatementSyntax)declaration).Declaration.WithType((TypeSyntax)type));
-                case SyntaxKind.VariableDeclaration:
-                    return ((VariableDeclarationSyntax)declaration).WithType((TypeSyntax)type);
-            }
-
-            return declaration;
-        }
+                SyntaxKind.DelegateDeclaration => ((DelegateDeclarationSyntax)declaration).WithReturnType((TypeSyntax)type),
+                SyntaxKind.MethodDeclaration => ((MethodDeclarationSyntax)declaration).WithReturnType((TypeSyntax)type),
+                SyntaxKind.FieldDeclaration => ((FieldDeclarationSyntax)declaration).WithDeclaration(((FieldDeclarationSyntax)declaration).Declaration.WithType((TypeSyntax)type)),
+                SyntaxKind.PropertyDeclaration => ((PropertyDeclarationSyntax)declaration).WithType((TypeSyntax)type),
+                SyntaxKind.IndexerDeclaration => ((IndexerDeclarationSyntax)declaration).WithType((TypeSyntax)type),
+                SyntaxKind.EventFieldDeclaration => ((EventFieldDeclarationSyntax)declaration).WithDeclaration(((EventFieldDeclarationSyntax)declaration).Declaration.WithType((TypeSyntax)type)),
+                SyntaxKind.EventDeclaration => ((EventDeclarationSyntax)declaration).WithType((TypeSyntax)type),
+                SyntaxKind.Parameter => ((ParameterSyntax)declaration).WithType((TypeSyntax)type),
+                SyntaxKind.LocalDeclarationStatement => ((LocalDeclarationStatementSyntax)declaration).WithDeclaration(((LocalDeclarationStatementSyntax)declaration).Declaration.WithType((TypeSyntax)type)),
+                SyntaxKind.VariableDeclaration => ((VariableDeclarationSyntax)declaration).WithType((TypeSyntax)type),
+                _ => declaration,
+            };
 
         private SyntaxNode Isolate(SyntaxNode declaration, Func<SyntaxNode, SyntaxNode> editor)
         {
@@ -2503,34 +2272,22 @@ namespace Microsoft.CodeAnalysis.CSharp.CodeGeneration
         }
 
         private static VariableDeclarationSyntax GetVariableDeclaration(SyntaxNode declaration)
-        {
-            switch (declaration.Kind())
+            => declaration.Kind() switch
             {
-                case SyntaxKind.FieldDeclaration:
-                    return ((FieldDeclarationSyntax)declaration).Declaration;
-                case SyntaxKind.EventFieldDeclaration:
-                    return ((EventFieldDeclarationSyntax)declaration).Declaration;
-                case SyntaxKind.LocalDeclarationStatement:
-                    return ((LocalDeclarationStatementSyntax)declaration).Declaration;
-                default:
-                    return null;
-            }
-        }
+                SyntaxKind.FieldDeclaration => ((FieldDeclarationSyntax)declaration).Declaration,
+                SyntaxKind.EventFieldDeclaration => ((EventFieldDeclarationSyntax)declaration).Declaration,
+                SyntaxKind.LocalDeclarationStatement => ((LocalDeclarationStatementSyntax)declaration).Declaration,
+                _ => null,
+            };
 
         private static SyntaxNode WithVariableDeclaration(SyntaxNode declaration, VariableDeclarationSyntax variables)
-        {
-            switch (declaration.Kind())
+            => declaration.Kind() switch
             {
-                case SyntaxKind.FieldDeclaration:
-                    return ((FieldDeclarationSyntax)declaration).WithDeclaration(variables);
-                case SyntaxKind.EventFieldDeclaration:
-                    return ((EventFieldDeclarationSyntax)declaration).WithDeclaration(variables);
-                case SyntaxKind.LocalDeclarationStatement:
-                    return ((LocalDeclarationStatementSyntax)declaration).WithDeclaration(variables);
-                default:
-                    return declaration;
-            }
-        }
+                SyntaxKind.FieldDeclaration => ((FieldDeclarationSyntax)declaration).WithDeclaration(variables),
+                SyntaxKind.EventFieldDeclaration => ((EventFieldDeclarationSyntax)declaration).WithDeclaration(variables),
+                SyntaxKind.LocalDeclarationStatement => ((LocalDeclarationStatementSyntax)declaration).WithDeclaration(variables),
+                _ => declaration,
+            };
 
         private static SyntaxNode GetFullDeclaration(SyntaxNode declaration)
         {
@@ -2587,17 +2344,19 @@ namespace Microsoft.CodeAnalysis.CSharp.CodeGeneration
 
         public override IReadOnlyList<SyntaxNode> GetParameters(SyntaxNode declaration)
         {
-            var list = GetParameterList(declaration);
+            var list = declaration.GetParameterList();
             return list != null
                 ? list.Parameters
-                : SpecializedCollections.EmptyReadOnlyList<SyntaxNode>();
+                : declaration is SimpleLambdaExpressionSyntax simpleLambda
+                    ? new[] { simpleLambda.Parameter }
+                    : SpecializedCollections.EmptyReadOnlyList<SyntaxNode>();
         }
 
         public override SyntaxNode InsertParameters(SyntaxNode declaration, int index, IEnumerable<SyntaxNode> parameters)
         {
             var newParameters = AsParameterList(parameters);
 
-            var currentList = GetParameterList(declaration);
+            var currentList = declaration.GetParameterList();
             if (currentList == null)
             {
                 currentList = declaration.IsKind(SyntaxKind.IndexerDeclaration)
@@ -2617,8 +2376,7 @@ namespace Microsoft.CodeAnalysis.CSharp.CodeGeneration
 
         public override SyntaxNode InsertSwitchSections(SyntaxNode switchStatement, int index, IEnumerable<SyntaxNode> switchSections)
         {
-            var statement = switchStatement as SwitchStatementSyntax;
-            if (statement == null)
+            if (!(switchStatement is SwitchStatementSyntax statement))
             {
                 return switchStatement;
             }
@@ -2668,36 +2426,7 @@ namespace Microsoft.CodeAnalysis.CSharp.CodeGeneration
         }
 
         internal override SyntaxNode GetParameterListNode(SyntaxNode declaration)
-            => GetParameterList(declaration);
-
-        internal static BaseParameterListSyntax GetParameterList(SyntaxNode declaration)
-        {
-            switch (declaration.Kind())
-            {
-                case SyntaxKind.DelegateDeclaration:
-                    return ((DelegateDeclarationSyntax)declaration).ParameterList;
-                case SyntaxKind.MethodDeclaration:
-                    return ((MethodDeclarationSyntax)declaration).ParameterList;
-                case SyntaxKind.OperatorDeclaration:
-                    return ((OperatorDeclarationSyntax)declaration).ParameterList;
-                case SyntaxKind.ConversionOperatorDeclaration:
-                    return ((ConversionOperatorDeclarationSyntax)declaration).ParameterList;
-                case SyntaxKind.ConstructorDeclaration:
-                    return ((ConstructorDeclarationSyntax)declaration).ParameterList;
-                case SyntaxKind.DestructorDeclaration:
-                    return ((DestructorDeclarationSyntax)declaration).ParameterList;
-                case SyntaxKind.IndexerDeclaration:
-                    return ((IndexerDeclarationSyntax)declaration).ParameterList;
-                case SyntaxKind.ParenthesizedLambdaExpression:
-                    return ((ParenthesizedLambdaExpressionSyntax)declaration).ParameterList;
-                case SyntaxKind.SimpleLambdaExpression:
-                    return SyntaxFactory.ParameterList(SyntaxFactory.SingletonSeparatedList(((SimpleLambdaExpressionSyntax)declaration).Parameter));
-                case SyntaxKind.LocalFunctionStatement:
-                    return ((LocalFunctionStatementSyntax)declaration).ParameterList;
-                default:
-                    return null;
-            }
-        }
+            => declaration.GetParameterList();
 
         private static SyntaxNode WithParameterList(SyntaxNode declaration, BaseParameterListSyntax list)
         {
@@ -2723,14 +2452,14 @@ namespace Microsoft.CodeAnalysis.CSharp.CodeGeneration
                     return ((ParenthesizedLambdaExpressionSyntax)declaration).WithParameterList((ParameterListSyntax)list);
                 case SyntaxKind.SimpleLambdaExpression:
                     var lambda = (SimpleLambdaExpressionSyntax)declaration;
-                    var roList = AsReadOnlyList(list.Parameters);
-                    if (roList.Count == 1 && IsSimpleLambdaParameter(roList[0]))
+                    var parameters = list.Parameters;
+                    if (parameters.Count == 1 && IsSimpleLambdaParameter(parameters[0]))
                     {
-                        return lambda.WithParameter(roList[0]);
+                        return lambda.WithParameter(parameters[0]);
                     }
                     else
                     {
-                        return SyntaxFactory.ParenthesizedLambdaExpression(AsParameterList(roList), lambda.Body)
+                        return SyntaxFactory.ParenthesizedLambdaExpression(AsParameterList(parameters), lambda.Body)
                             .WithLeadingTrivia(lambda.GetLeadingTrivia())
                             .WithTrailingTrivia(lambda.GetTrailingTrivia());
                     }
@@ -2999,49 +2728,31 @@ namespace Microsoft.CodeAnalysis.CSharp.CodeGeneration
         }
 
         private static AccessorListSyntax GetAccessorList(SyntaxNode declaration)
-        {
-            switch (declaration.Kind())
+            => declaration.Kind() switch
             {
-                case SyntaxKind.PropertyDeclaration:
-                    return ((PropertyDeclarationSyntax)declaration).AccessorList;
-                case SyntaxKind.IndexerDeclaration:
-                    return ((IndexerDeclarationSyntax)declaration).AccessorList;
-                case SyntaxKind.EventDeclaration:
-                    return ((EventDeclarationSyntax)declaration).AccessorList;
-                default:
-                    return null;
-            }
-        }
+                SyntaxKind.PropertyDeclaration => ((PropertyDeclarationSyntax)declaration).AccessorList,
+                SyntaxKind.IndexerDeclaration => ((IndexerDeclarationSyntax)declaration).AccessorList,
+                SyntaxKind.EventDeclaration => ((EventDeclarationSyntax)declaration).AccessorList,
+                _ => null,
+            };
 
         private static bool CanHaveAccessors(SyntaxNode declaration)
-        {
-            switch (declaration.Kind())
+            => declaration.Kind() switch
             {
-                case SyntaxKind.PropertyDeclaration:
-                    return ((PropertyDeclarationSyntax)declaration).ExpressionBody == null;
-                case SyntaxKind.IndexerDeclaration:
-                    return ((IndexerDeclarationSyntax)declaration).ExpressionBody == null;
-                case SyntaxKind.EventDeclaration:
-                    return true;
-                default:
-                    return false;
-            }
-        }
+                SyntaxKind.PropertyDeclaration => ((PropertyDeclarationSyntax)declaration).ExpressionBody == null,
+                SyntaxKind.IndexerDeclaration => ((IndexerDeclarationSyntax)declaration).ExpressionBody == null,
+                SyntaxKind.EventDeclaration => true,
+                _ => false,
+            };
 
         private static SyntaxNode WithAccessorList(SyntaxNode declaration, AccessorListSyntax accessorList)
-        {
-            switch (declaration.Kind())
+            => declaration.Kind() switch
             {
-                case SyntaxKind.PropertyDeclaration:
-                    return ((PropertyDeclarationSyntax)declaration).WithAccessorList(accessorList);
-                case SyntaxKind.IndexerDeclaration:
-                    return ((PropertyDeclarationSyntax)declaration).WithAccessorList(accessorList);
-                case SyntaxKind.EventDeclaration:
-                    return ((EventDeclarationSyntax)declaration).WithAccessorList(accessorList);
-                default:
-                    return declaration;
-            }
-        }
+                SyntaxKind.PropertyDeclaration => ((PropertyDeclarationSyntax)declaration).WithAccessorList(accessorList),
+                SyntaxKind.IndexerDeclaration => ((PropertyDeclarationSyntax)declaration).WithAccessorList(accessorList),
+                SyntaxKind.EventDeclaration => ((EventDeclarationSyntax)declaration).WithAccessorList(accessorList),
+                _ => declaration,
+            };
 
         private static AccessorListSyntax AsAccessorList(IEnumerable<SyntaxNode> nodes, SyntaxKind parentKind)
         {
@@ -3190,34 +2901,22 @@ namespace Microsoft.CodeAnalysis.CSharp.CodeGeneration
         }
 
         private static BaseListSyntax GetBaseList(SyntaxNode declaration)
-        {
-            switch (declaration.Kind())
+            => declaration.Kind() switch
             {
-                case SyntaxKind.ClassDeclaration:
-                    return ((ClassDeclarationSyntax)declaration).BaseList;
-                case SyntaxKind.StructDeclaration:
-                    return ((StructDeclarationSyntax)declaration).BaseList;
-                case SyntaxKind.InterfaceDeclaration:
-                    return ((InterfaceDeclarationSyntax)declaration).BaseList;
-                default:
-                    return null;
-            }
-        }
+                SyntaxKind.ClassDeclaration => ((ClassDeclarationSyntax)declaration).BaseList,
+                SyntaxKind.StructDeclaration => ((StructDeclarationSyntax)declaration).BaseList,
+                SyntaxKind.InterfaceDeclaration => ((InterfaceDeclarationSyntax)declaration).BaseList,
+                _ => null,
+            };
 
         private static SyntaxNode WithBaseList(SyntaxNode declaration, BaseListSyntax baseList)
-        {
-            switch (declaration.Kind())
+            => declaration.Kind() switch
             {
-                case SyntaxKind.ClassDeclaration:
-                    return ((ClassDeclarationSyntax)declaration).WithBaseList(baseList);
-                case SyntaxKind.StructDeclaration:
-                    return ((StructDeclarationSyntax)declaration).WithBaseList(baseList);
-                case SyntaxKind.InterfaceDeclaration:
-                    return ((InterfaceDeclarationSyntax)declaration).WithBaseList(baseList);
-                default:
-                    return declaration;
-            }
-        }
+                SyntaxKind.ClassDeclaration => ((ClassDeclarationSyntax)declaration).WithBaseList(baseList),
+                SyntaxKind.StructDeclaration => ((StructDeclarationSyntax)declaration).WithBaseList(baseList),
+                SyntaxKind.InterfaceDeclaration => ((InterfaceDeclarationSyntax)declaration).WithBaseList(baseList),
+                _ => declaration,
+            };
 
         #endregion
 
@@ -3429,7 +3128,7 @@ namespace Microsoft.CodeAnalysis.CSharp.CodeGeneration
 
         private IEnumerable<SyntaxNode> SplitAndInsert(SyntaxNode multiPartDeclaration, int index, IEnumerable<SyntaxNode> newDeclarations)
         {
-            int count = GetDeclarationCount(multiPartDeclaration);
+            var count = GetDeclarationCount(multiPartDeclaration);
             var newNodes = new List<SyntaxNode>();
             newNodes.Add(this.WithSubDeclarationsRemoved(multiPartDeclaration, index, count - index).WithTrailingTrivia(SyntaxFactory.ElasticSpace));
             newNodes.AddRange(newDeclarations);
@@ -3443,23 +3142,15 @@ namespace Microsoft.CodeAnalysis.CSharp.CodeGeneration
         }
 
         private static IReadOnlyList<SyntaxNode> GetSubDeclarations(SyntaxNode declaration)
-        {
-            switch (declaration.Kind())
+            => declaration.Kind() switch
             {
-                case SyntaxKind.FieldDeclaration:
-                    return ((FieldDeclarationSyntax)declaration).Declaration.Variables;
-                case SyntaxKind.EventFieldDeclaration:
-                    return ((EventFieldDeclarationSyntax)declaration).Declaration.Variables;
-                case SyntaxKind.LocalDeclarationStatement:
-                    return ((LocalDeclarationStatementSyntax)declaration).Declaration.Variables;
-                case SyntaxKind.VariableDeclaration:
-                    return ((VariableDeclarationSyntax)declaration).Variables;
-                case SyntaxKind.AttributeList:
-                    return ((AttributeListSyntax)declaration).Attributes;
-                default:
-                    return SpecializedCollections.EmptyReadOnlyList<SyntaxNode>();
-            }
-        }
+                SyntaxKind.FieldDeclaration => ((FieldDeclarationSyntax)declaration).Declaration.Variables,
+                SyntaxKind.EventFieldDeclaration => ((EventFieldDeclarationSyntax)declaration).Declaration.Variables,
+                SyntaxKind.LocalDeclarationStatement => ((LocalDeclarationStatementSyntax)declaration).Declaration.Variables,
+                SyntaxKind.VariableDeclaration => ((VariableDeclarationSyntax)declaration).Variables,
+                SyntaxKind.AttributeList => ((AttributeListSyntax)declaration).Attributes,
+                _ => SpecializedCollections.EmptyReadOnlyList<SyntaxNode>(),
+            };
 
         public override SyntaxNode RemoveNode(SyntaxNode root, SyntaxNode node)
         {
@@ -3485,8 +3176,7 @@ namespace Microsoft.CodeAnalysis.CSharp.CodeGeneration
             {
                 case SyntaxKind.Attribute:
                     var attr = (AttributeSyntax)declaration;
-                    var attrList = attr.Parent as AttributeListSyntax;
-                    if (attrList != null && attrList.Attributes.Count == 1)
+                    if (attr.Parent is AttributeListSyntax attrList && attrList.Attributes.Count == 1)
                     {
                         // remove entire list if only one attribute
                         return this.RemoveNodeInternal(root, attrList, options);
@@ -3511,8 +3201,7 @@ namespace Microsoft.CodeAnalysis.CSharp.CodeGeneration
                     break;
 
                 case SyntaxKind.SimpleBaseType:
-                    var baseList = declaration.Parent as BaseListSyntax;
-                    if (baseList != null && baseList.Types.Count == 1)
+                    if (declaration.Parent is BaseListSyntax baseList && baseList.Types.Count == 1)
                     {
                         // remove entire base list if this is the only base type.
                         return this.RemoveNodeInternal(root, baseList, options);
@@ -3578,11 +3267,7 @@ namespace Microsoft.CodeAnalysis.CSharp.CodeGeneration
         }
 
         public override SyntaxNode NameOfExpression(SyntaxNode expression)
-        {
-            return this.InvocationExpression(
-                this.IdentifierName(CSharp.SyntaxFacts.GetText(SyntaxKind.NameOfKeyword)),
-                expression);
-        }
+            => this.InvocationExpression(s_nameOfIdentifier, expression);
 
         public override SyntaxNode ReturnStatement(SyntaxNode expressionOpt = null)
             => SyntaxFactory.ReturnStatement((ExpressionSyntax)expressionOpt);
@@ -3598,6 +3283,14 @@ namespace Microsoft.CodeAnalysis.CSharp.CodeGeneration
             return SyntaxFactory.ThrowExpression((ExpressionSyntax)expression);
         }
 
+        internal override bool SupportsThrowExpression() => true;
+
+        /// <summary>
+        /// C# always requires a type to be present with a local declaration.  (Even if that type is
+        /// <c>var</c>).
+        /// </summary>
+        internal override bool RequiresLocalDeclarationType() => true;
+
         public override SyntaxNode IfStatement(SyntaxNode condition, IEnumerable<SyntaxNode> trueStatements, IEnumerable<SyntaxNode> falseStatements = null)
         {
             if (falseStatements == null)
@@ -3608,7 +3301,7 @@ namespace Microsoft.CodeAnalysis.CSharp.CodeGeneration
             }
             else
             {
-                var falseArray = AsReadOnlyList(falseStatements);
+                var falseArray = falseStatements.ToList();
 
                 // make else-if chain if false-statements contain only an if-statement
                 return SyntaxFactory.IfStatement(
@@ -3648,14 +3341,15 @@ namespace Microsoft.CodeAnalysis.CSharp.CodeGeneration
                 (SimpleNameSyntax)simpleName);
         }
 
-        internal override SyntaxNode ConditionalAccessExpression(SyntaxNode expression, SyntaxNode whenNotNull)
+        public override SyntaxNode ConditionalAccessExpression(SyntaxNode expression, SyntaxNode whenNotNull)
             => SyntaxFactory.ConditionalAccessExpression((ExpressionSyntax)expression, (ExpressionSyntax)whenNotNull);
 
-        internal override SyntaxNode MemberBindingExpression(SyntaxNode name)
+        public override SyntaxNode MemberBindingExpression(SyntaxNode name)
             => SyntaxFactory.MemberBindingExpression((SimpleNameSyntax)name);
 
-        internal override SyntaxNode ElementBindingExpression(SyntaxNode argumentList)
-            => SyntaxFactory.ElementBindingExpression((BracketedArgumentListSyntax)argumentList);
+        public override SyntaxNode ElementBindingExpression(IEnumerable<SyntaxNode> arguments)
+            => SyntaxFactory.ElementBindingExpression(
+                SyntaxFactory.BracketedArgumentList(SyntaxFactory.SeparatedList(arguments)));
 
         /// <summary>
         /// Parenthesize the left hand size of a member access, invocation or element access expression
@@ -3739,6 +3433,14 @@ namespace Microsoft.CodeAnalysis.CSharp.CodeGeneration
         internal override SyntaxNode Interpolation(SyntaxNode syntaxNode)
             => SyntaxFactory.Interpolation((ExpressionSyntax)syntaxNode);
 
+        internal override SyntaxNode InterpolationAlignmentClause(SyntaxNode alignment)
+            => SyntaxFactory.InterpolationAlignmentClause(SyntaxFactory.Token(SyntaxKind.CommaToken), (ExpressionSyntax)alignment);
+
+        internal override SyntaxNode InterpolationFormatClause(string format)
+            => SyntaxFactory.InterpolationFormatClause(
+                    SyntaxFactory.Token(SyntaxKind.ColonToken),
+                    SyntaxFactory.Token(default, SyntaxKind.InterpolatedStringTextToken, format, format, default));
+
         internal override SyntaxToken NumericLiteralToken(string text, ulong value)
             => SyntaxFactory.Literal(text, value);
 
@@ -3780,14 +3482,14 @@ namespace Microsoft.CodeAnalysis.CSharp.CodeGeneration
             return DefaultExpression(type.GenerateTypeSyntax());
         }
 
-        internal override SyntaxNode AddParentheses(SyntaxNode expression)
+        internal override SyntaxNode AddParentheses(SyntaxNode expression, bool includeElasticTrivia = true, bool addSimplifierAnnotation = true)
         {
-            return Parenthesize(expression);
+            return Parenthesize(expression, includeElasticTrivia, addSimplifierAnnotation);
         }
 
-        private static ExpressionSyntax Parenthesize(SyntaxNode expression)
+        private static ExpressionSyntax Parenthesize(SyntaxNode expression, bool includeElasticTrivia = true, bool addSimplifierAnnotation = true)
         {
-            return ((ExpressionSyntax)expression).Parenthesize();
+            return ((ExpressionSyntax)expression).Parenthesize(includeElasticTrivia, addSimplifierAnnotation);
         }
 
         public override SyntaxNode IsTypeExpression(SyntaxNode expression, SyntaxNode type)
@@ -4008,43 +3710,25 @@ namespace Microsoft.CodeAnalysis.CSharp.CodeGeneration
         }
 
         public override SyntaxNode TypeExpression(SpecialType specialType)
-        {
-            switch (specialType)
+            => specialType switch
             {
-                case SpecialType.System_Boolean:
-                    return SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.BoolKeyword));
-                case SpecialType.System_Byte:
-                    return SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.ByteKeyword));
-                case SpecialType.System_Char:
-                    return SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.CharKeyword));
-                case SpecialType.System_Decimal:
-                    return SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.DecimalKeyword));
-                case SpecialType.System_Double:
-                    return SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.DoubleKeyword));
-                case SpecialType.System_Int16:
-                    return SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.ShortKeyword));
-                case SpecialType.System_Int32:
-                    return SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.IntKeyword));
-                case SpecialType.System_Int64:
-                    return SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.LongKeyword));
-                case SpecialType.System_Object:
-                    return SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.ObjectKeyword));
-                case SpecialType.System_SByte:
-                    return SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.SByteKeyword));
-                case SpecialType.System_Single:
-                    return SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.FloatKeyword));
-                case SpecialType.System_String:
-                    return SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.StringKeyword));
-                case SpecialType.System_UInt16:
-                    return SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.UShortKeyword));
-                case SpecialType.System_UInt32:
-                    return SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.UIntKeyword));
-                case SpecialType.System_UInt64:
-                    return SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.ULongKeyword));
-                default:
-                    throw new NotSupportedException("Unsupported SpecialType");
-            }
-        }
+                SpecialType.System_Boolean => SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.BoolKeyword)),
+                SpecialType.System_Byte => SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.ByteKeyword)),
+                SpecialType.System_Char => SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.CharKeyword)),
+                SpecialType.System_Decimal => SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.DecimalKeyword)),
+                SpecialType.System_Double => SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.DoubleKeyword)),
+                SpecialType.System_Int16 => SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.ShortKeyword)),
+                SpecialType.System_Int32 => SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.IntKeyword)),
+                SpecialType.System_Int64 => SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.LongKeyword)),
+                SpecialType.System_Object => SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.ObjectKeyword)),
+                SpecialType.System_SByte => SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.SByteKeyword)),
+                SpecialType.System_Single => SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.FloatKeyword)),
+                SpecialType.System_String => SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.StringKeyword)),
+                SpecialType.System_UInt16 => SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.UShortKeyword)),
+                SpecialType.System_UInt32 => SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.UIntKeyword)),
+                SpecialType.System_UInt64 => SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.ULongKeyword)),
+                _ => throw new NotSupportedException("Unsupported SpecialType"),
+            };
 
         public override SyntaxNode ArrayTypeExpression(SyntaxNode type)
         {
@@ -4078,35 +3762,12 @@ namespace Microsoft.CodeAnalysis.CSharp.CodeGeneration
         }
 
         public override SyntaxNode LocalDeclarationStatement(SyntaxNode type, string name, SyntaxNode initializer, bool isConst)
-            => LocalDeclarationStatement(type, name.ToIdentifierToken(), initializer, isConst);
-
-        internal override SyntaxNode LocalDeclarationStatement(SyntaxNode type, SyntaxToken name, SyntaxNode initializer, bool isConst)
-        {
-            return SyntaxFactory.LocalDeclarationStatement(
-                isConst ? SyntaxFactory.TokenList(SyntaxFactory.Token(SyntaxKind.ConstKeyword)) : default,
-                VariableDeclaration(type, name, initializer));
-        }
-
-        internal override SyntaxNode WithInitializer(SyntaxNode variableDeclarator, SyntaxNode initializer)
-            => ((VariableDeclaratorSyntax)variableDeclarator).WithInitializer((EqualsValueClauseSyntax)initializer);
-
-        internal override SyntaxNode EqualsValueClause(SyntaxToken operatorToken, SyntaxNode value)
-            => SyntaxFactory.EqualsValueClause(operatorToken, (ExpressionSyntax)value);
-
-        private static VariableDeclarationSyntax VariableDeclaration(SyntaxNode type, SyntaxToken name, SyntaxNode expression)
-        {
-            return SyntaxFactory.VariableDeclaration(
-                type == null ? SyntaxFactory.IdentifierName("var") : (TypeSyntax)type,
-                    SyntaxFactory.SingletonSeparatedList(
-                        SyntaxFactory.VariableDeclarator(
-                            name, argumentList: null,
-                            expression == null ? null : SyntaxFactory.EqualsValueClause((ExpressionSyntax)expression))));
-        }
+            => CSharpSyntaxGeneratorInternal.Instance.LocalDeclarationStatement(type, name.ToIdentifierToken(), initializer, isConst);
 
         public override SyntaxNode UsingStatement(SyntaxNode type, string name, SyntaxNode expression, IEnumerable<SyntaxNode> statements)
         {
             return SyntaxFactory.UsingStatement(
-                VariableDeclaration(type, name.ToIdentifierToken(), expression),
+                CSharpSyntaxGeneratorInternal.VariableDeclaration(type, name.ToIdentifierToken(), expression),
                 expression: null,
                 statement: CreateBlock(statements));
         }
@@ -4207,23 +3868,20 @@ namespace Microsoft.CodeAnalysis.CSharp.CodeGeneration
 
         public override SyntaxNode ValueReturningLambdaExpression(IEnumerable<SyntaxNode> parameterDeclarations, SyntaxNode expression)
         {
-            var prms = AsReadOnlyList(parameterDeclarations?.Cast<ParameterSyntax>());
+            var parameters = parameterDeclarations?.Cast<ParameterSyntax>().ToList();
 
-            if (prms.Count == 1 && IsSimpleLambdaParameter(prms[0]))
+            if (parameters != null && parameters.Count == 1 && IsSimpleLambdaParameter(parameters[0]))
             {
-                return SyntaxFactory.SimpleLambdaExpression(prms[0], (CSharpSyntaxNode)expression);
+                return SyntaxFactory.SimpleLambdaExpression(parameters[0], (CSharpSyntaxNode)expression);
             }
             else
             {
-                return SyntaxFactory.ParenthesizedLambdaExpression(AsParameterList(prms), (CSharpSyntaxNode)expression);
+                return SyntaxFactory.ParenthesizedLambdaExpression(AsParameterList(parameters), (CSharpSyntaxNode)expression);
             }
         }
 
         private static bool IsSimpleLambdaParameter(SyntaxNode node)
-        {
-            var p = node as ParameterSyntax;
-            return p != null && p.Type == null && p.Default == null && p.Modifiers.Count == 0;
-        }
+            => node is ParameterSyntax p && p.Type == null && p.Default == null && p.Modifiers.Count == 0;
 
         public override SyntaxNode VoidReturningLambdaExpression(IEnumerable<SyntaxNode> lambdaParameters, SyntaxNode expression)
         {
@@ -4245,16 +3903,8 @@ namespace Microsoft.CodeAnalysis.CSharp.CodeGeneration
             return this.ParameterDeclaration(identifier, type, null, RefKind.None);
         }
 
-        private static IReadOnlyList<T> AsReadOnlyList<T>(IEnumerable<T> sequence)
-        {
-            return sequence as IReadOnlyList<T> ?? sequence.ToImmutableReadOnlyListOrEmpty();
-        }
-
         internal override SyntaxNode IdentifierName(SyntaxToken identifier)
             => SyntaxFactory.IdentifierName(identifier);
-
-        internal override SyntaxToken Identifier(string identifier)
-            => SyntaxFactory.Identifier(identifier);
 
         internal override SyntaxNode NamedAnonymousObjectMemberDeclarator(SyntaxNode identifier, SyntaxNode expression)
         {
@@ -4284,10 +3934,10 @@ namespace Microsoft.CodeAnalysis.CSharp.CodeGeneration
 
         internal override SyntaxTriviaList RemoveCommentLines(SyntaxTriviaList syntaxTriviaList)
         {
-            IEnumerable<IEnumerable<SyntaxTrivia>> splitIntoLines(SyntaxTriviaList triviaList)
+            static IEnumerable<IEnumerable<SyntaxTrivia>> splitIntoLines(SyntaxTriviaList triviaList)
             {
-                int index = 0;
-                for (int i = 0; i < triviaList.Count; i++)
+                var index = 0;
+                for (var i = 0; i < triviaList.Count; i++)
                 {
                     if (triviaList[i].IsEndOfLine())
                     {
@@ -4317,6 +3967,9 @@ namespace Microsoft.CodeAnalysis.CSharp.CodeGeneration
 
         internal override SyntaxNode IsPatternExpression(SyntaxNode expression, SyntaxNode pattern)
             => SyntaxFactory.IsPatternExpression((ExpressionSyntax)expression, (PatternSyntax)pattern);
+
+        internal override SyntaxNode ConstantPattern(SyntaxNode expression)
+            => SyntaxFactory.ConstantPattern((ExpressionSyntax)expression);
 
         internal override SyntaxNode DeclarationPattern(INamedTypeSymbol type, string name)
             => SyntaxFactory.DeclarationPattern(

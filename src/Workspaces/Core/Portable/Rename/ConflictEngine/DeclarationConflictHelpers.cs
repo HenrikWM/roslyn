@@ -1,4 +1,6 @@
-﻿// Copyright (c) Microsoft.  All Rights Reserved.  Licensed under the Apache License, Version 2.0.  See License.txt in the project root for license information.
+﻿// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 using System;
 using System.Collections.Generic;
@@ -18,7 +20,7 @@ namespace Microsoft.CodeAnalysis.Rename.ConflictEngine
                                             .OfType<IMethodSymbol>()
                                             .Where(m => !m.Equals(renamedMethod) && m.Arity == renamedMethod.Arity);
 
-            return GetConflictLocations(renamedMethod, potentiallyConfictingMethods, isMethod:true,
+            return GetConflictLocations(renamedMethod, potentiallyConfictingMethods, isMethod: true,
                 (method) => GetAllSignatures((method as IMethodSymbol).Parameters, trimOptionalParameters));
         }
 
@@ -27,13 +29,13 @@ namespace Microsoft.CodeAnalysis.Rename.ConflictEngine
             var potentiallyConfictingProperties =
                 renamedProperty.ContainingType.GetMembers(renamedProperty.Name)
                                             .OfType<IPropertySymbol>()
-                                            .Where(m => !m.Equals(renamedProperty) && m.Parameters.Count() == renamedProperty.Parameters.Count());
+                                            .Where(m => !m.Equals(renamedProperty) && m.Parameters.Length == renamedProperty.Parameters.Length);
 
             return GetConflictLocations(renamedProperty, potentiallyConfictingProperties, isMethod: false,
-                (property)=>GetAllSignatures((property as IPropertySymbol).Parameters, trimOptionalParameters));
+                (property) => GetAllSignatures((property as IPropertySymbol).Parameters, trimOptionalParameters));
         }
 
-        private static ImmutableArray<Location> GetConflictLocations(ISymbol renamedMember, 
+        private static ImmutableArray<Location> GetConflictLocations(ISymbol renamedMember,
             IEnumerable<ISymbol> potentiallyConfictingMembers,
             bool isMethod,
             Func<ISymbol, ImmutableArray<ImmutableArray<ITypeSymbol>>> getAllSignatures)
@@ -58,8 +60,8 @@ namespace Microsoft.CodeAnalysis.Rename.ConflictEngine
                     {
                         var conflictingMethod = conflictingSymbol as IMethodSymbol;
                         var renamedMethod = renamedMember as IMethodSymbol;
-                        if (!(conflictingMethod.PartialDefinitionPart != null && conflictingMethod.PartialDefinitionPart == renamedMethod) &&
-                            !(conflictingMethod.PartialImplementationPart != null && conflictingMethod.PartialImplementationPart == renamedMethod))
+                        if (!(conflictingMethod.PartialDefinitionPart != null && Equals(conflictingMethod.PartialDefinitionPart, renamedMethod)) &&
+                            !(conflictingMethod.PartialImplementationPart != null && Equals(conflictingMethod.PartialImplementationPart, renamedMethod)))
                         {
                             builder.AddRange(conflictingSymbol.Locations);
                         }

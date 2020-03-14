@@ -1,4 +1,6 @@
-﻿// Copyright (c) Microsoft.  All Rights Reserved.  Licensed under the Apache License, Version 2.0.  See License.txt in the project root for license information.
+﻿// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 using System;
 using System.Collections.Generic;
@@ -195,7 +197,7 @@ namespace Microsoft.CodeAnalysis.GenerateMember.GenerateConstructor
                 }
 
                 // Try to map those parameters to fields.
-                this.GetParameters(remainingArguments, remainingAttributeArguments,
+                GetParameters(remainingArguments, remainingAttributeArguments,
                     remainingParameterTypes, remainingParameterNames, fieldNamingRule, parameterNamingRule,
                     out var parameterToExistingFieldMap, out var parameterToNewFieldMap, out var remainingParameters);
 
@@ -203,7 +205,7 @@ namespace Microsoft.CodeAnalysis.GenerateMember.GenerateConstructor
                     ? syntaxFactory.CreateFieldsForParameters(remainingParameters, parameterToNewFieldMap)
                     : ImmutableArray<IFieldSymbol>.Empty;
                 var assignStatements = syntaxFactory.CreateAssignmentStatements(
-                    _document.SemanticModel.Compilation, remainingParameters,
+                    _document.SemanticModel, remainingParameters,
                     parameterToExistingFieldMap, parameterToNewFieldMap,
                     addNullChecks: false, preferThrowExpression: false);
 
@@ -253,12 +255,11 @@ namespace Microsoft.CodeAnalysis.GenerateMember.GenerateConstructor
 
                 var syntaxTree = _document.SyntaxTree;
                 var (fields, constructor) = syntaxFactory.CreateFieldDelegatingConstructor(
-                    _document.SemanticModel.Compilation,
+                    _document.SemanticModel,
                     _state.TypeToGenerateIn.Name,
                     _state.TypeToGenerateIn, parameters,
                     parameterToExistingFieldMap, parameterToNewFieldMap,
-                    addNullChecks: false, preferThrowExpression: false,
-                    cancellationToken: _cancellationToken);
+                    addNullChecks: false, preferThrowExpression: false);
 
                 var result = await codeGenerationService.AddMembersAsync(
                     _document.Project.Solution,

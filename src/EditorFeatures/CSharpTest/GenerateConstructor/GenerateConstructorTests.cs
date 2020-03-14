@@ -1,4 +1,6 @@
-﻿// Copyright (c) Microsoft.  All Rights Reserved.  Licensed under the Apache License, Version 2.0.  See License.txt in the project root for license information.
+﻿// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 using System.Threading.Tasks;
 using Microsoft.CodeAnalysis.CodeFixes;
@@ -3573,7 +3575,7 @@ class Program
         string s = "";
         new Program(s);
     }
-}", options: options.FieldNamesAreCamelCaseWithUnderscore);
+}", options: options.FieldNamesAreCamelCaseWithUnderscorePrefix);
         }
 
         [WorkItem(14077, "https://github.com/dotnet/roslyn/issues/14077")]
@@ -3607,7 +3609,7 @@ class Program
         string s = """";
         new Program(s);
     }
-}", options: options.FieldNamesAreCamelCaseWithUnderscore);
+}", options: options.FieldNamesAreCamelCaseWithUnderscorePrefix);
         }
 
         [WorkItem(14077, "https://github.com/dotnet/roslyn/issues/14077")]
@@ -3639,7 +3641,7 @@ class Program
         string s = """";
         new Program(s);
     }
-}", options: options.MergeStyles(options.FieldNamesAreCamelCaseWithUnderscore, options.ParameterNamesAreCamelCaseWithPUnderscorePrefix, LanguageNames.CSharp));
+}", options: options.MergeStyles(options.FieldNamesAreCamelCaseWithUnderscorePrefix, options.ParameterNamesAreCamelCaseWithPUnderscorePrefix, LanguageNames.CSharp));
         }
 
         [WorkItem(14077, "https://github.com/dotnet/roslyn/issues/14077")]
@@ -3674,7 +3676,115 @@ class MyAttribute : Attribute
 [MyAttribute(123)]
 class D
 {
-}", options: options.MergeStyles(options.FieldNamesAreCamelCaseWithUnderscore, options.ParameterNamesAreCamelCaseWithPUnderscorePrefix, LanguageNames.CSharp));
+}", options: options.MergeStyles(options.FieldNamesAreCamelCaseWithUnderscorePrefix, options.ParameterNamesAreCamelCaseWithPUnderscorePrefix, LanguageNames.CSharp));
+        }
+
+        [WorkItem(33673, "https://github.com/dotnet/roslyn/issues/33673")]
+        [Theory, Trait(Traits.Feature, Traits.Features.CodeActionsGenerateConstructor)]
+        [InlineData("_s", "s")]
+        [InlineData("_S", "s")]
+        [InlineData("m_s", "s")]
+        [InlineData("m_S", "s")]
+        [InlineData("s_s", "s")]
+        [InlineData("t_s", "s")]
+        public async Task GenerateConstructor_ArgumentHasCommonPrefix(string argumentName, string fieldName)
+        {
+            await TestInRegularAndScriptAsync(
+$@"
+class Program
+{{
+    static void Main(string[] args)
+    {{
+        string {argumentName} = "";
+        new Prog[||]ram({argumentName});
+    }}
+}}",
+$@"
+class Program
+{{
+    private string {fieldName};
+
+    public Program(string {fieldName})
+    {{
+        this.{fieldName} = {fieldName};
+    }}
+
+    static void Main(string[] args)
+    {{
+        string {argumentName} = "";
+        new Program({argumentName});
+    }}
+}}");
+        }
+
+        [Fact, Trait(Traits.Feature, Traits.Features.CodeActionsGenerateConstructor)]
+        public async Task TestWithTopLevelNullability()
+        {
+            await TestInRegularAndScriptAsync(
+@"#nullable enable
+
+class C
+{
+    void M()
+    {
+        string? s = null;
+        new [|C|](s);
+    }
+}",
+@"#nullable enable
+
+class C
+{
+    private string? s;
+
+    public C(string? s)
+    {
+        this.s = s;
+    }
+
+    void M()
+    {
+        string? s = null;
+        new C(s);
+    }
+}");
+        }
+
+        [Fact, Trait(Traits.Feature, Traits.Features.CodeActionsGenerateConstructor)]
+        public async Task TestWitNestedNullability()
+        {
+            await TestInRegularAndScriptAsync(
+@"#nullable enable
+
+using System.Collections.Generic;
+
+class C
+{
+    void M()
+    {
+        IEnumerable<string?> s;
+        new [|C|](s);
+    }
+}",
+@"#nullable enable
+
+using System.Collections.Generic;
+
+class C
+{
+    private IEnumerable<string?> s;
+
+    public C(IEnumerable<string?> s)
+    {
+        this.s = s;
+    }
+
+    void M()
+    {
+        IEnumerable<string?> s;
+        new C(s);
+    }
+}");
         }
     }
 }

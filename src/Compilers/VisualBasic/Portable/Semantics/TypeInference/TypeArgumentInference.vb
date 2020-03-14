@@ -1,4 +1,6 @@
-﻿' Copyright (c) Microsoft.  All Rights Reserved.  Licensed under the Apache License, Version 2.0.  See License.txt in the project root for license information.
+﻿' Licensed to the .NET Foundation under one or more agreements.
+' The .NET Foundation licenses this file to you under the MIT license.
+' See the LICENSE file in the project root for more information.
 
 Imports System.Collections.Immutable
 Imports System.Runtime.InteropServices
@@ -2092,9 +2094,12 @@ HandleAsAGeneralExpression:
                     End Select
 
                     Dim delegateParams As ImmutableArray(Of ParameterSymbol) = invokeMethod.Parameters
-                    Dim minCount As Integer = Math.Min(lambdaParams.Length, delegateParams.Length)
 
-                    For i As Integer = 0 To minCount - 1 Step 1
+                    If lambdaParams.Length > delegateParams.Length Then
+                        Return True
+                    End If
+
+                    For i As Integer = 0 To lambdaParams.Length - 1 Step 1
                         Dim lambdaParam As ParameterSymbol = lambdaParams(i)
                         Dim delegateParam As ParameterSymbol = delegateParams(i)
 

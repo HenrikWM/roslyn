@@ -19,7 +19,7 @@
       </trans-unit>
       <trans-unit id="Add_missing_Imports">
         <source>Add missing Imports</source>
-        <target state="translated">Ajouter les importations manquantes</target>
+        <target state="translated">Ajouter les Import manquants</target>
         <note>{Locked="Import"} "Import" is a VB keyword and should not be localized.</note>
       </trans-unit>
       <trans-unit id="Add_Shadows">
@@ -74,7 +74,7 @@
       </trans-unit>
       <trans-unit id="Make_0_inheritable">
         <source>Make '{0}' inheritable</source>
-        <target state="new">Make '{0}' inheritable</target>
+        <target state="translated">Rendre '{0}' héritable</target>
         <note />
       </trans-unit>
       <trans-unit id="Move_the_0_statement_to_line_1">
@@ -90,11 +90,6 @@
       <trans-unit id="Multiple_Types">
         <source>&lt;Multiple Types&gt;</source>
         <target state="translated">&lt;Plusieurs types&gt;</target>
-        <note />
-      </trans-unit>
-      <trans-unit id="Remove_Unnecessary_Imports">
-        <source>Remove Unnecessary Imports</source>
-        <target state="translated">Supprimer les importations superflues</target>
         <note />
       </trans-unit>
       <trans-unit id="Type_a_name_here_to_declare_a_new_field">
@@ -229,7 +224,7 @@
       </trans-unit>
       <trans-unit id="Not_all_code_paths_return">
         <source>Not all code paths return</source>
-        <target state="translated">Tous les chemins de code n'ont pas été retournés</target>
+        <target state="translated">Tous les chemins du code n'ont pas été retournés</target>
         <note />
       </trans-unit>
       <trans-unit id="contains_invalid_selection">
@@ -335,11 +330,6 @@
       <trans-unit id="new_variable">
         <source>&lt;new variable&gt;</source>
         <target state="translated">&lt;nouvelle variable&gt;</target>
-        <note />
-      </trans-unit>
-      <trans-unit id="Remove_and_Sort_Imports">
-        <source>R&amp;emove and Sort Imports</source>
-        <target state="translated">Supprimer &amp;et trier les directives import</target>
         <note />
       </trans-unit>
       <trans-unit id="Creates_a_delegate_procedure_instance_that_references_the_specified_procedure_AddressOf_procedureName">
@@ -1542,11 +1532,6 @@ Sub(&lt;parameterList&gt;) &lt;statement&gt;</target>
         <target state="translated">TODO: supprimer les marques de commentaire pour la ligne suivante si Finalize() est remplacé ci-dessus.</target>
         <note />
       </trans-unit>
-      <trans-unit id="Imports_statement_is_unnecessary">
-        <source>Imports statement is unnecessary.</source>
-        <target state="translated">L'instruction Imports n'est pas utile.</target>
-        <note />
-      </trans-unit>
       <trans-unit id="Try_block">
         <source>Try block</source>
         <target state="translated">Bloc Try</target>
@@ -1825,11 +1810,6 @@ Sub(&lt;parameterList&gt;) &lt;statement&gt;</target>
       <trans-unit id="Make_Async_Sub">
         <source>Make Async Sub</source>
         <target state="translated">Rendre le Sub asynchrone</target>
-        <note />
-      </trans-unit>
-      <trans-unit id="Add_Me">
-        <source>Add 'Me.'</source>
-        <target state="translated">Ajouter 'Me.'</target>
         <note />
       </trans-unit>
       <trans-unit id="Use_Is_Nothing_check">

@@ -1,4 +1,6 @@
-﻿// Copyright (c) Microsoft.  All Rights Reserved.  Licensed under the Apache License, Version 2.0.  See License.txt in the project root for license information.
+﻿// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 using System.Collections.Generic;
 using System.Collections.Immutable;
@@ -36,7 +38,7 @@ namespace Microsoft.CodeAnalysis.CSharp
                 if (pinnedTemp.RefKind == RefKind.None)
                 {
                     // temp = null;
-                    cleanup[i] = _factory.Assignment(_factory.Local(pinnedTemp), _factory.Null(pinnedTemp.Type.TypeSymbol));
+                    cleanup[i] = _factory.Assignment(_factory.Local(pinnedTemp), _factory.Null(pinnedTemp.Type));
                 }
                 else
                 {
@@ -45,8 +47,8 @@ namespace Microsoft.CodeAnalysis.CSharp
                     // temp = ref *default(T*);
                     cleanup[i] = _factory.Assignment(_factory.Local(pinnedTemp), new BoundPointerIndirectionOperator(
                         _factory.Syntax,
-                        _factory.Default(new PointerTypeSymbol(pinnedTemp.Type)),
-                        pinnedTemp.Type.TypeSymbol),
+                        _factory.Default(new PointerTypeSymbol(pinnedTemp.TypeWithAnnotations)),
+                        pinnedTemp.Type),
                         isRef: true);
                 }
             }
@@ -239,14 +241,14 @@ namespace Microsoft.CodeAnalysis.CSharp
             SyntheticBoundNodeFactory factory,
             out LocalSymbol pinnedTemp)
         {
-            TypeSymbol localType = localSymbol.Type.TypeSymbol;
+            TypeSymbol localType = localSymbol.Type;
             BoundExpression initializerExpr = VisitExpression(fixedInitializer.Expression);
 
             // initializer expr should be either an address(&) of something or a fixed field access.
             // either should lower into addressof
             Debug.Assert(initializerExpr.Kind == BoundKind.AddressOfOperator);
 
-            TypeSymbol initializerType = ((PointerTypeSymbol)initializerExpr.Type).PointedAtType.TypeSymbol;
+            TypeSymbol initializerType = ((PointerTypeSymbol)initializerExpr.Type).PointedAtType;
 
             // initializer expressions are bound/lowered right into addressof operators here
             // that is a bit too far
@@ -308,7 +310,7 @@ namespace Microsoft.CodeAnalysis.CSharp
             SyntheticBoundNodeFactory factory,
             out LocalSymbol pinnedTemp)
         {
-            TypeSymbol localType = localSymbol.Type.TypeSymbol;
+            TypeSymbol localType = localSymbol.Type;
             BoundExpression initializerExpr = VisitExpression(fixedInitializer.Expression);
 
             var initializerType = initializerExpr.Type;
@@ -321,7 +323,7 @@ namespace Microsoft.CodeAnalysis.CSharp
 
             // pinned ref int pinnedTemp
             pinnedTemp = factory.SynthesizedLocal(
-                getPinnableMethod.ReturnType.TypeSymbol,
+                getPinnableMethod.ReturnType,
                 syntax: declarator,
                 isPinned: true,
                 //NOTE: different from the array and string cases
@@ -336,7 +338,7 @@ namespace Microsoft.CodeAnalysis.CSharp
 
             if (needNullCheck)
             {
-                currentConditionalAccessID = _currentConditionalAccessID++;
+                currentConditionalAccessID = ++_currentConditionalAccessID;
                 callReceiver = new BoundConditionalReceiver(
                     initializerSyntax,
                     currentConditionalAccessID,
@@ -410,7 +412,7 @@ namespace Microsoft.CodeAnalysis.CSharp
             SyntheticBoundNodeFactory factory,
             out LocalSymbol pinnedTemp)
         {
-            TypeSymbol localType = localSymbol.Type.TypeSymbol;
+            TypeSymbol localType = localSymbol.Type;
             BoundExpression initializerExpr = VisitExpression(fixedInitializer.Expression);
             TypeSymbol initializerType = initializerExpr.Type;
 
@@ -481,13 +483,13 @@ namespace Microsoft.CodeAnalysis.CSharp
             SyntheticBoundNodeFactory factory,
             out LocalSymbol pinnedTemp)
         {
-            TypeSymbol localType = localSymbol.Type.TypeSymbol;
+            TypeSymbol localType = localSymbol.Type;
             BoundExpression initializerExpr = VisitExpression(fixedInitializer.Expression);
             TypeSymbol initializerType = initializerExpr.Type;
 
             pinnedTemp = factory.SynthesizedLocal(initializerType, isPinned: true);
-            ArrayTypeSymbol arrayType = (ArrayTypeSymbol)pinnedTemp.Type.TypeSymbol;
-            TypeSymbolWithAnnotations arrayElementType = arrayType.ElementType;
+            ArrayTypeSymbol arrayType = (ArrayTypeSymbol)pinnedTemp.Type;
+            TypeWithAnnotations arrayElementType = arrayType.ElementTypeWithAnnotations;
 
             // NOTE: we pin the array, not the pointer.
             Debug.Assert(pinnedTemp.IsPinned);

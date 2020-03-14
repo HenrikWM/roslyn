@@ -1,4 +1,6 @@
-﻿// Copyright (c) Microsoft.  All Rights Reserved.  Licensed under the Apache License, Version 2.0.  See License.txt in the project root for license information.
+﻿// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 using System.Diagnostics;
 using Microsoft.CodeAnalysis.CSharp.Symbols;
@@ -14,7 +16,8 @@ namespace Microsoft.CodeAnalysis.CSharp
         // Types identified by the algorithm in the spec (8.8.4).
         public readonly TypeSymbol CollectionType;
         // public readonly TypeSymbol EnumeratorType; // redundant - return type of GetEnumeratorMethod
-        public readonly TypeSymbolWithAnnotations ElementType;
+        public readonly TypeWithAnnotations ElementTypeWithAnnotations;
+        public TypeSymbol ElementType => ElementTypeWithAnnotations.Type;
 
         // Members required by the "pattern" based approach.  Also populated for other approaches.
         public readonly MethodSymbol GetEnumeratorMethod;
@@ -26,8 +29,10 @@ namespace Microsoft.CodeAnalysis.CSharp
         // Computed during initial binding so that we can expose it in the semantic model.
         public readonly bool NeedsDisposal;
 
+        public readonly bool IsAsync;
+
         // When async and needs disposal, this stores the information to await the DisposeAsync() invocation
-        public AwaitableInfo DisposeAwaitableInfo;
+        public readonly BoundAwaitableInfo DisposeAwaitableInfo;
 
         // When using pattern-based Dispose, this stores the method to invoke to Dispose
         public readonly MethodSymbol DisposeMethod;
@@ -40,17 +45,15 @@ namespace Microsoft.CodeAnalysis.CSharp
 
         public readonly BinderFlags Location;
 
-        internal bool IsAsync
-            => DisposeAwaitableInfo != null;
-
         private ForEachEnumeratorInfo(
             TypeSymbol collectionType,
-            TypeSymbolWithAnnotations elementType,
+            TypeWithAnnotations elementType,
             MethodSymbol getEnumeratorMethod,
             MethodSymbol currentPropertyGetter,
             MethodSymbol moveNextMethod,
+            bool isAsync,
             bool needsDisposal,
-            AwaitableInfo disposeAwaitableInfo,
+            BoundAwaitableInfo disposeAwaitableInfo,
             MethodSymbol disposeMethod,
             Conversion collectionConversion,
             Conversion currentConversion,
@@ -64,10 +67,11 @@ namespace Microsoft.CodeAnalysis.CSharp
             Debug.Assert((object)moveNextMethod != null, "Field 'moveNextMethod' cannot be null");
 
             this.CollectionType = collectionType;
-            this.ElementType = elementType;
+            this.ElementTypeWithAnnotations = elementType;
             this.GetEnumeratorMethod = getEnumeratorMethod;
             this.CurrentPropertyGetter = currentPropertyGetter;
             this.MoveNextMethod = moveNextMethod;
+            this.IsAsync = isAsync;
             this.NeedsDisposal = needsDisposal;
             this.DisposeAwaitableInfo = disposeAwaitableInfo;
             this.DisposeMethod = disposeMethod;
@@ -81,14 +85,16 @@ namespace Microsoft.CodeAnalysis.CSharp
         internal struct Builder
         {
             public TypeSymbol CollectionType;
-            public TypeSymbolWithAnnotations ElementType;
+            public TypeWithAnnotations ElementTypeWithAnnotations;
+            public TypeSymbol ElementType => ElementTypeWithAnnotations.Type;
 
             public MethodSymbol GetEnumeratorMethod;
             public MethodSymbol CurrentPropertyGetter;
             public MethodSymbol MoveNextMethod;
 
+            public bool IsAsync;
             public bool NeedsDisposal;
-            public AwaitableInfo DisposeAwaitableInfo;
+            public BoundAwaitableInfo DisposeAwaitableInfo;
             public MethodSymbol DisposeMethod;
 
             public Conversion CollectionConversion;
@@ -106,10 +112,11 @@ namespace Microsoft.CodeAnalysis.CSharp
 
                 return new ForEachEnumeratorInfo(
                     CollectionType,
-                    ElementType,
+                    ElementTypeWithAnnotations,
                     GetEnumeratorMethod,
                     CurrentPropertyGetter,
                     MoveNextMethod,
+                    IsAsync,
                     NeedsDisposal,
                     DisposeAwaitableInfo,
                     DisposeMethod,

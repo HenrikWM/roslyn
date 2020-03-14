@@ -1,4 +1,6 @@
-﻿// Copyright (c) Microsoft.  All Rights Reserved.  Licensed under the Apache License, Version 2.0.  See License.txt in the project root for license information.
+﻿// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 using System;
 using System.Collections.Immutable;
@@ -78,7 +80,7 @@ namespace Microsoft.CodeAnalysis.CSharp.Symbols
             ImmutableArray<AnonymousTypeField> otherFields = other.Fields;
             for (int i = 0; i < count; i++)
             {
-                if (!myFields[i].Type.Equals(otherFields[i].Type, comparison))
+                if (!myFields[i].TypeWithAnnotations.Equals(otherFields[i].TypeWithAnnotations, comparison))
                 {
                     return false;
                 }
@@ -104,7 +106,7 @@ namespace Microsoft.CodeAnalysis.CSharp.Symbols
         /// Creates a new anonymous type descriptor based on 'this' one, 
         /// but having field types passed as an argument.
         /// </summary>
-        internal AnonymousTypeDescriptor WithNewFieldsTypes(ImmutableArray<TypeSymbolWithAnnotations> newFieldTypes)
+        internal AnonymousTypeDescriptor WithNewFieldsTypes(ImmutableArray<TypeWithAnnotations> newFieldTypes)
         {
             Debug.Assert(!newFieldTypes.IsDefault);
             Debug.Assert(newFieldTypes.Length == this.Fields.Length);

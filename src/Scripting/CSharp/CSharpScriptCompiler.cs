@@ -1,4 +1,6 @@
-﻿// Copyright (c) Microsoft.  All Rights Reserved.  Licensed under the Apache License, Version 2.0.  See License.txt in the project root for license information.
+﻿// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 using System;
 using System.Threading;
@@ -11,7 +13,7 @@ namespace Microsoft.CodeAnalysis.CSharp.Scripting
     {
         public static readonly ScriptCompiler Instance = new CSharpScriptCompiler();
 
-        private static readonly CSharpParseOptions s_defaultOptions = new CSharpParseOptions(kind: SourceCodeKind.Script, languageVersion: LanguageVersion.Latest);
+        internal static readonly CSharpParseOptions DefaultParseOptions = new CSharpParseOptions(kind: SourceCodeKind.Script, languageVersion: LanguageVersion.Latest);
 
         private CSharpScriptCompiler()
         {
@@ -23,8 +25,8 @@ namespace Microsoft.CodeAnalysis.CSharp.Scripting
 
         public override bool IsCompleteSubmission(SyntaxTree tree) => SyntaxFactory.IsCompleteSubmission(tree);
 
-        public override SyntaxTree ParseSubmission(SourceText text, CancellationToken cancellationToken) =>
-            SyntaxFactory.ParseSyntaxTree(text, s_defaultOptions, cancellationToken: cancellationToken);
+        public override SyntaxTree ParseSubmission(SourceText text, ParseOptions parseOptions, CancellationToken cancellationToken) =>
+            SyntaxFactory.ParseSyntaxTree(text, parseOptions ?? DefaultParseOptions, cancellationToken: cancellationToken);
 
         public override Compilation CreateSubmission(Script script)
         {
@@ -40,7 +42,7 @@ namespace Microsoft.CodeAnalysis.CSharp.Scripting
             // TODO: report diagnostics
             diagnostics.Free();
 
-            var tree = SyntaxFactory.ParseSyntaxTree(script.SourceText, s_defaultOptions, script.Options.FilePath);
+            var tree = SyntaxFactory.ParseSyntaxTree(script.SourceText, script.Options.ParseOptions ?? DefaultParseOptions, script.Options.FilePath);
 
             string assemblyName, submissionTypeName;
             script.Builder.GenerateSubmissionId(out assemblyName, out submissionTypeName);

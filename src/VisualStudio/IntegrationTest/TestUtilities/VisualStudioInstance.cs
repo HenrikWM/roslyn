@@ -1,4 +1,6 @@
-﻿// Copyright (c) Microsoft.  All Rights Reserved.  Licensed under the Apache License, Version 2.0.  See License.txt in the project root for license information.
+﻿// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 using System;
 using System.Collections.Immutable;
@@ -55,7 +57,7 @@ namespace Microsoft.VisualStudio.IntegrationTest.Utilities
         public InlineRenameDialog_OutOfProc InlineRenameDialog { get; set; }
 
         public LocalsWindow_OutOfProc LocalsWindow { get; set; }
-
+        public MoveToNamespaceDialog_OutOfProc MoveToNamespaceDialog { get; }
         public PickMembersDialog_OutOfProc PickMembersDialog { get; set; }
 
         public PreviewChangesDialog_OutOfProc PreviewChangesDialog { get; }
@@ -137,6 +139,7 @@ namespace Microsoft.VisualStudio.IntegrationTest.Utilities
             InlineRenameDialog = new InlineRenameDialog_OutOfProc(this);
             ImmediateWindow = new ImmediateWindow_OutOfProc(this);
             LocalsWindow = new LocalsWindow_OutOfProc(this);
+            MoveToNamespaceDialog = new MoveToNamespaceDialog_OutOfProc(this);
             PickMembersDialog = new PickMembersDialog_OutOfProc(this);
             PreviewChangesDialog = new PreviewChangesDialog_OutOfProc(this);
             Shell = new Shell_OutOfProc(this);
@@ -184,7 +187,7 @@ namespace Microsoft.VisualStudio.IntegrationTest.Utilities
 
         public void WaitForApplicationIdle(CancellationToken cancellationToken)
         {
-            var task = Task.Factory.StartNew(() => _inProc.WaitForApplicationIdle(), cancellationToken, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+            var task = Task.Factory.StartNew(() => _inProc.WaitForApplicationIdle(Helper.HangMitigatingTimeout), cancellationToken, TaskCreationOptions.LongRunning, TaskScheduler.Default);
             task.Wait(cancellationToken);
         }
 
@@ -218,6 +221,7 @@ namespace Microsoft.VisualStudio.IntegrationTest.Utilities
             ChangeSignatureDialog.CloseWindow();
             GenerateTypeDialog.CloseWindow();
             ExtractInterfaceDialog.CloseWindow();
+            MoveToNamespaceDialog.CloseWindow();
             PickMembersDialog.CloseWindow();
             StartPage.CloseWindow();
 
@@ -298,7 +302,6 @@ namespace Microsoft.VisualStudio.IntegrationTest.Utilities
         private void StartRemoteIntegrationService(DTE dte)
         {
             // We use DTE over RPC to start the integration service. All other DTE calls should happen in the host process.
-
             if (dte.Commands.Item(WellKnownCommandNames.Test_IntegrationTestService_Start).IsAvailable)
             {
                 dte.ExecuteCommand(WellKnownCommandNames.Test_IntegrationTestService_Start);

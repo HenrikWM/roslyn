@@ -1,10 +1,11 @@
-﻿// Copyright (c) Microsoft.  All Rights Reserved.  Licensed under the Apache License, Version 2.0.  See License.txt in the project root for license information.
+﻿// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 using System.Collections.Immutable;
 using System.Diagnostics;
 using Microsoft.CodeAnalysis.CSharp.Symbols;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
-using Microsoft.CodeAnalysis.PooledObjects;
 
 namespace Microsoft.CodeAnalysis.CSharp
 {
@@ -60,7 +61,7 @@ namespace Microsoft.CodeAnalysis.CSharp
                                                        ImmutableArray<BoundLocalDeclaration> declarations,
                                                        Conversion iDisposableConversion,
                                                        MethodSymbol disposeMethodOpt,
-                                                       AwaitableInfo awaitOpt,
+                                                       BoundAwaitableInfo awaitOpt,
                                                        SyntaxToken awaitKeyword)
         {
             Debug.Assert(declarations != null);
@@ -196,12 +197,12 @@ namespace Microsoft.CodeAnalysis.CSharp
         /// Assumes that the local symbol will be declared (i.e. in the LocalsOpt array) of an enclosing block.
         /// Assumes that using statements with multiple locals have already been split up into multiple using statements.
         /// </remarks>
-        private BoundBlock RewriteDeclarationUsingStatement(SyntaxNode usingSyntax, BoundLocalDeclaration localDeclaration, BoundBlock tryBlock, Conversion iDisposableConversion, SyntaxToken awaitKeywordOpt, AwaitableInfo awaitOpt, MethodSymbol methodSymbol)
+        private BoundBlock RewriteDeclarationUsingStatement(SyntaxNode usingSyntax, BoundLocalDeclaration localDeclaration, BoundBlock tryBlock, Conversion iDisposableConversion, SyntaxToken awaitKeywordOpt, BoundAwaitableInfo awaitOpt, MethodSymbol methodSymbol)
         {
             SyntaxNode declarationSyntax = localDeclaration.Syntax;
 
             LocalSymbol localSymbol = localDeclaration.LocalSymbol;
-            TypeSymbol localType = localSymbol.Type.TypeSymbol;
+            TypeSymbol localType = localSymbol.Type;
             Debug.Assert((object)localType != null); //otherwise, there wouldn't be a conversion to IDisposable
 
             BoundLocal boundLocal = new BoundLocal(declarationSyntax, localSymbol, localDeclaration.InitializerOpt.ConstantValue, localType);
@@ -253,7 +254,7 @@ namespace Microsoft.CodeAnalysis.CSharp
             }
         }
 
-        private BoundStatement RewriteUsingStatementTryFinally(SyntaxNode syntax, BoundBlock tryBlock, BoundLocal local, SyntaxToken awaitKeywordOpt, AwaitableInfo awaitOpt, MethodSymbol methodOpt)
+        private BoundStatement RewriteUsingStatementTryFinally(SyntaxNode syntax, BoundBlock tryBlock, BoundLocal local, SyntaxToken awaitKeywordOpt, BoundAwaitableInfo awaitOpt, MethodSymbol methodOpt)
         {
             // SPEC: When ResourceType is a non-nullable value type, the expansion is:
             // SPEC: 
@@ -324,7 +325,7 @@ namespace Microsoft.CodeAnalysis.CSharp
             // "{ dynamic temp1 = x; IDisposable temp2 = (IDisposable) temp1; ... }". Rather, we elide
             // the completely unnecessary first temporary. 
 
-            Debug.Assert((awaitKeywordOpt == default) == (awaitOpt == default(AwaitableInfo)));
+            Debug.Assert((awaitKeywordOpt == default) == (awaitOpt is null));
             BoundExpression disposedExpression;
             bool isNullableValueType = local.Type.IsNullableType();
 
@@ -396,7 +397,7 @@ namespace Microsoft.CodeAnalysis.CSharp
             return tryFinally;
         }
 
-        private BoundExpression GenerateDisposeCall(SyntaxNode syntax, BoundExpression disposedExpression, MethodSymbol methodOpt, AwaitableInfo awaitOpt, SyntaxToken awaitKeyword)
+        private BoundExpression GenerateDisposeCall(SyntaxNode syntax, BoundExpression disposedExpression, MethodSymbol methodOpt, BoundAwaitableInfo awaitOpt, SyntaxToken awaitKeyword)
         {
             Debug.Assert(awaitOpt is null || awaitKeyword != default);
 
@@ -424,12 +425,12 @@ namespace Microsoft.CodeAnalysis.CSharp
             {
                 disposeCall = MakeCallWithNoExplicitArgument(syntax, disposedExpression, methodOpt);
 
-                if (!(awaitOpt is null))
+                if (awaitOpt is object)
                 {
                     // await local.DisposeAsync()
                     _sawAwaitInExceptionHandler = true;
 
-                    TypeSymbol awaitExpressionType = awaitOpt.GetResult?.ReturnType.TypeSymbol ?? _compilation.DynamicType;
+                    TypeSymbol awaitExpressionType = awaitOpt.GetResult?.ReturnType ?? _compilation.DynamicType;
                     disposeCall = RewriteAwaitExpression(syntax, disposeCall, awaitOpt, awaitExpressionType, false);
                 }
             }
@@ -461,7 +462,7 @@ namespace Microsoft.CodeAnalysis.CSharp
                 invokedAsExtensionMethod: method.IsExtensionMethod,
                 argsToParamsOpt: default,
                 resultKind: LookupResultKind.Viable,
-                type: method.ReturnType.TypeSymbol);
+                type: method.ReturnType);
 
             return disposeCall;
         }

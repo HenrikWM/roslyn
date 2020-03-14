@@ -1,4 +1,6 @@
-﻿// Copyright (c) Microsoft.  All Rights Reserved.  Licensed under the Apache License, Version 2.0.  See License.txt in the project root for license information.
+﻿// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 using System.Collections.Generic;
 using System.Collections.Immutable;
@@ -110,8 +112,8 @@ namespace Microsoft.CodeAnalysis.CSharp
             BoundStatement rewrittenBody = (BoundStatement)Visit(node.Body);
 
             MethodSymbol getEnumeratorMethod = enumeratorInfo.GetEnumeratorMethod;
-            TypeSymbol enumeratorType = getEnumeratorMethod.ReturnType.TypeSymbol;
-            TypeSymbol elementType = enumeratorInfo.ElementType.TypeSymbol;
+            TypeSymbol enumeratorType = getEnumeratorMethod.ReturnType;
+            TypeSymbol elementType = enumeratorInfo.ElementType;
 
             // E e
             LocalSymbol enumeratorVar = _factory.SynthesizedLocal(enumeratorType, syntax: forEachSyntax, kind: SynthesizedLocalKind.ForEachEnumerator);
@@ -168,7 +170,7 @@ namespace Microsoft.CodeAnalysis.CSharp
                     allowExtensionAndOptionalParameters: isAsync);
             if (isAsync)
             {
-                rewrittenCondition = RewriteAwaitExpression(forEachSyntax, rewrittenCondition, node.AwaitOpt, node.AwaitOpt.GetResult.ReturnType.TypeSymbol, used: true);
+                rewrittenCondition = RewriteAwaitExpression(forEachSyntax, rewrittenCondition, node.AwaitOpt, node.AwaitOpt.GetResult.ReturnType, used: true);
             }
 
             BoundStatement whileLoop = RewriteWhileStatement(
@@ -400,9 +402,9 @@ namespace Microsoft.CodeAnalysis.CSharp
         /// Produce:
         /// await /* disposeCall */;
         /// </summary>
-        private BoundStatement WrapWithAwait(CommonForEachStatementSyntax forEachSyntax, BoundExpression disposeCall, AwaitableInfo disposeAwaitableInfoOpt)
+        private BoundStatement WrapWithAwait(CommonForEachStatementSyntax forEachSyntax, BoundExpression disposeCall, BoundAwaitableInfo disposeAwaitableInfoOpt)
         {
-            TypeSymbol awaitExpressionType = disposeAwaitableInfoOpt.GetResult?.ReturnType.TypeSymbol ?? _compilation.DynamicType;
+            TypeSymbol awaitExpressionType = disposeAwaitableInfoOpt.GetResult?.ReturnType ?? _compilation.DynamicType;
             var awaitExpr = RewriteAwaitExpression(forEachSyntax, disposeCall, disposeAwaitableInfoOpt, awaitExpressionType, used: false);
             return new BoundExpressionStatement(forEachSyntax, awaitExpr);
         }
@@ -740,7 +742,7 @@ namespace Microsoft.CodeAnalysis.CSharp
                     syntax: forEachSyntax,
                     expression: boundArrayVar,
                     indices: ImmutableArray.Create<BoundExpression>(boundPositionVar),
-                    type: arrayType.ElementType.TypeSymbol),
+                    type: arrayType.ElementType),
                 conversion: node.ElementConversion,
                 rewrittenType: node.IterationVariableType.Type,
                 @checked: node.Checked);
@@ -894,7 +896,7 @@ namespace Microsoft.CodeAnalysis.CSharp
                 rewrittenOperand: new BoundArrayAccess(forEachSyntax,
                     expression: boundArrayVar,
                     indices: ImmutableArray.Create((BoundExpression[])boundPositionVar),
-                    type: arrayType.ElementType.TypeSymbol),
+                    type: arrayType.ElementType),
                 conversion: node.ElementConversion,
                 rewrittenType: node.IterationVariableType.Type,
                 @checked: node.Checked);

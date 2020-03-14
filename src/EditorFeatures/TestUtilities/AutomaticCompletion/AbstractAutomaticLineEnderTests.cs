@@ -1,4 +1,6 @@
-﻿// Copyright (c) Microsoft.  All Rights Reserved.  Licensed under the Apache License, Version 2.0.  See License.txt in the project root for license information.
+﻿// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 using System;
 using System.Linq;
@@ -6,7 +8,6 @@ using Microsoft.CodeAnalysis.Editor.UnitTests.Utilities;
 using Microsoft.CodeAnalysis.Editor.UnitTests.Workspaces;
 using Microsoft.CodeAnalysis.Test.Utilities;
 using Microsoft.VisualStudio.Commanding;
-using Microsoft.VisualStudio.Language.Intellisense.AsyncCompletion;
 using Microsoft.VisualStudio.Text;
 using Microsoft.VisualStudio.Text.Editor;
 using Microsoft.VisualStudio.Text.Editor.Commanding.Commands;
@@ -24,8 +25,7 @@ namespace Microsoft.CodeAnalysis.Editor.UnitTests.AutomaticCompletion
 
         internal abstract IChainedCommandHandler<AutomaticLineEnderCommandArgs> CreateCommandHandler(
             ITextUndoHistoryRegistry undoRegistry,
-            IEditorOperationsFactoryService editorOperations,
-            IAsyncCompletionBroker asyncCompletionBroker);
+            IEditorOperationsFactoryService editorOperations);
 
         protected void Test(string expected, string code, bool completionActive = false, bool assertNextHandlerInvoked = false)
         {
@@ -39,8 +39,7 @@ namespace Microsoft.CodeAnalysis.Editor.UnitTests.AutomaticCompletion
 
                 var commandHandler = CreateCommandHandler(
                                         GetExportedValue<ITextUndoHistoryRegistry>(workspace),
-                                        GetExportedValue<IEditorOperationsFactoryService>(workspace),
-                                        GetExportedValue<IAsyncCompletionBroker>(workspace));
+                                        GetExportedValue<IEditorOperationsFactoryService>(workspace));
 
                 commandHandler.ExecuteCommand(new AutomaticLineEnderCommandArgs(view, buffer),
                                                     assertNextHandlerInvoked

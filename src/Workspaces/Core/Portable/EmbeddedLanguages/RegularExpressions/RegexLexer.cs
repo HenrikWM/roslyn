@@ -1,4 +1,6 @@
-﻿// Copyright (c) Microsoft.  All Rights Reserved.  Licensed under the Apache License, Version 2.0.  See License.txt in the project root for license information.
+﻿// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 using System.Collections.Immutable;
 using System.Diagnostics;
@@ -382,7 +384,7 @@ namespace Microsoft.CodeAnalysis.EmbeddedLanguages.RegularExpressions
             Debug.Assert(Text[beforeSlash].Char == '\\');
             Debug.Assert(Text[beforeSlash + 1].Char == 'x' || Text[beforeSlash + 1].Char == 'u');
 
-            for (int i = 0; i < count; i++)
+            for (var i = 0; i < count; i++)
             {
                 if (Position < Text.Length && IsHexChar(this.CurrentChar))
                 {
@@ -426,9 +428,9 @@ namespace Microsoft.CodeAnalysis.EmbeddedLanguages.RegularExpressions
             Debug.Assert(IsOctalDigit(Text[start].Char));
 
             const int maxChars = 3;
-            int currentVal = 0;
+            var currentVal = 0;
 
-            for (int i = 0; i < maxChars; i++)
+            for (var i = 0; i < maxChars; i++)
             {
                 if (Position < Text.Length && IsOctalDigit(this.CurrentChar))
                 {
@@ -440,7 +442,7 @@ namespace Microsoft.CodeAnalysis.EmbeddedLanguages.RegularExpressions
                     Position++;
 
                     // Ecmascript doesn't allow octal values above 32 (0x20 in hex). Note: we do
-                    // *not* add a diagnostic.  This is not an error situation. The .net lexer
+                    // *not* add a diagnostic.  This is not an error situation. The .NET lexer
                     // simply stops once it hits a value greater than a legal octal value.
                     if (HasOption(options, RegexOptions.ECMAScript) && currentVal >= 0x20)
                     {

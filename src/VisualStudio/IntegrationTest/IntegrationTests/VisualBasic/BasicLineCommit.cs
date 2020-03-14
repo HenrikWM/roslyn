@@ -1,4 +1,6 @@
-﻿// Copyright (c) Microsoft.  All Rights Reserved.  Licensed under the Apache License, Version 2.0.  See License.txt in the project root for license information.
+﻿// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Test.Utilities;
@@ -77,7 +79,7 @@ End Module");
             VisualStudio.Editor.Verify.CaretPosition(16);
         }
 
-        [WpfFact, Trait(Traits.Feature, Traits.Features.LineCommit)]
+        [WpfFact(Skip = "https://github.com/dotnet/roslyn/issues/34637"), Trait(Traits.Feature, Traits.Features.LineCommit)]
         void CommitOnSave()
         {
             VisualStudio.Editor.SetText(@"Module Module1
@@ -88,7 +90,7 @@ End Module
 
             VisualStudio.Editor.PlaceCaret("(", charsOffset: 1);
             VisualStudio.Editor.SendKeys("x   as   integer", VirtualKey.Tab);
-            VisualStudio.ExecuteCommand("File.SaveSelectedItems");
+            VisualStudio.Editor.SendKeys(new KeyPress(VirtualKey.S, ShiftState.Ctrl));
             VisualStudio.Editor.Verify.TextContains(@"Sub Main(x As Integer)");
             VisualStudio.ExecuteCommand(WellKnownCommandNames.Edit_Undo);
             VisualStudio.Editor.Verify.TextContains(@"Sub Main(x   As   Integer)");

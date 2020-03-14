@@ -1,4 +1,6 @@
-﻿// Copyright (c) Microsoft.  All Rights Reserved.  Licensed under the Apache License, Version 2.0.  See License.txt in the project root for license information.
+﻿// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 using System;
 using System.Collections.Concurrent;
@@ -31,9 +33,18 @@ namespace Microsoft.CodeAnalysis.CSharp
         {
             get
             {
-                return _cache ?? (_cache = new SmallDictionary<NamedTypeSymbol, bool>());
+                return _cache ?? (_cache = new SmallDictionary<NamedTypeSymbol, bool>(Symbols.SymbolEqualityComparer.ConsiderEverything));
             }
         }
+
+        public static EmptyStructTypeCache CreateForDev12Compatibility(CSharpCompilation compilation)
+            => new EmptyStructTypeCache(compilation, dev12CompilerCompatibility: true);
+
+        public static EmptyStructTypeCache CreatePrecise()
+            => new EmptyStructTypeCache(null, false);
+
+        public static EmptyStructTypeCache CreateNeverEmpty()
+            => new NeverEmptyStructTypeCache();
 
         /// <summary>
         /// Create a cache for computing whether or not a struct type is "empty".
@@ -42,11 +53,27 @@ namespace Microsoft.CodeAnalysis.CSharp
         ///  ignores inaccessible fields of reference type for structs loaded from metadata.</param>
         /// <param name="compilation">if <see cref="_dev12CompilerCompatibility"/> is true, set to the compilation from
         /// which to check accessibility.</param>
-        internal EmptyStructTypeCache(Compilation compilation, bool dev12CompilerCompatibility)
+        private EmptyStructTypeCache(CSharpCompilation compilation, bool dev12CompilerCompatibility)
         {
             Debug.Assert(compilation != null || !dev12CompilerCompatibility);
             _dev12CompilerCompatibility = dev12CompilerCompatibility;
-            _sourceAssembly = (SourceAssemblySymbol)compilation?.Assembly;
+            _sourceAssembly = compilation?.SourceAssembly;
+        }
+
+        /// <summary>
+        /// Specialized EmptyStructTypeCache that reports all structs as not empty
+        /// </summary>
+        private sealed class NeverEmptyStructTypeCache : EmptyStructTypeCache
+        {
+            public NeverEmptyStructTypeCache()
+               : base(null, false)
+            {
+            }
+
+            public override bool IsEmptyStructType(TypeSymbol type)
+            {
+                return false;
+            }
         }
 
         /// <summary>
@@ -121,7 +148,7 @@ namespace Microsoft.CodeAnalysis.CSharp
                 var field = GetActualField(member, type);
                 if ((object)field != null)
                 {
-                    var actualFieldType = field.Type.TypeSymbol;
+                    var actualFieldType = field.Type;
                     if (!IsEmptyStructType(actualFieldType, typesWithMembersOfThisType))
                     {
                         return false;
@@ -179,11 +206,11 @@ namespace Microsoft.CodeAnalysis.CSharp
                         return null;
                     }
 
-                    return (field.IsFixedSizeBuffer || ShouldIgnoreStructField(field, field.Type.TypeSymbol)) ? null : field.AsMember(type);
+                    return (field.IsFixedSizeBuffer || ShouldIgnoreStructField(field, field.Type)) ? null : field.AsMember(type);
 
                 case SymbolKind.Event:
                     var eventSymbol = (EventSymbol)member;
-                    return (!eventSymbol.HasAssociatedField || ShouldIgnoreStructField(eventSymbol, eventSymbol.Type.TypeSymbol)) ? null : eventSymbol.AssociatedField.AsMember(type);
+                    return (!eventSymbol.HasAssociatedField || ShouldIgnoreStructField(eventSymbol, eventSymbol.Type)) ? null : eventSymbol.AssociatedField.AsMember(type);
             }
 
             return null;
@@ -243,22 +270,6 @@ namespace Microsoft.CodeAnalysis.CSharp
             }
 
             return true;
-        }
-    }
-
-    /// <summary>
-    /// Specialized EmptyStructTypeCache that reports all structs as not empty
-    /// </summary>
-    internal sealed class NeverEmptyStructTypeCache : EmptyStructTypeCache
-    {
-        public NeverEmptyStructTypeCache()
-           : base(null, false)
-        {
-        }
-
-        public override bool IsEmptyStructType(TypeSymbol type)
-        {
-            return false;
         }
     }
 }

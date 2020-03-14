@@ -1,4 +1,6 @@
-﻿// Copyright (c) Microsoft.  All Rights Reserved.  Licensed under the Apache License, Version 2.0.  See License.txt in the project root for license information.
+﻿// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 using System;
 using System.Collections.Generic;
@@ -23,18 +25,18 @@ namespace Microsoft.CodeAnalysis.EmbeddedLanguages.RegularExpressions
     /// Produces a <see cref="RegexTree"/> from a sequence of <see cref="VirtualChar"/> characters.
     ///
     /// Importantly, this parser attempts to replicate diagnostics with almost the exact same text
-    /// as the native .Net regex parser.  This is important so that users get an understandable
+    /// as the native .NET regex parser.  This is important so that users get an understandable
     /// experience where it appears to them that this is all one cohesive system and that the IDE
     /// will let them discover and fix the same issues they would encounter when previously trying
     /// to just compile and execute these regexes.
     /// </summary>
     /// <remarks>
-    /// Invariants we try to maintain (and should consider a bug if we do not): l 1. If the .net
+    /// Invariants we try to maintain (and should consider a bug if we do not): l 1. If the .NET
     /// regex parser does not report an error for a given pattern, we should not either. it would be
     /// very bad if we told the user there was something wrong with there pattern when there really
     /// wasn't.
     ///
-    /// 2. If the .net regex parser does report an error for a given pattern, we should either not
+    /// 2. If the .NET regex parser does report an error for a given pattern, we should either not
     /// report an error (not recommended) or report the same error at an appropriate location in the
     /// pattern.  Not reporting the error can be confusing as the user will think their pattern is
     /// ok, when it really is not.  However, it can be acceptable to do this as it's not telling
@@ -43,23 +45,23 @@ namespace Microsoft.CodeAnalysis.EmbeddedLanguages.RegularExpressions
     /// documented in <see cref="ParsePossibleEcmascriptBackreferenceEscape"/>).
     ///
     /// Note1: "report the same error" means that we will attempt to report the error using the same
-    /// text the .net regex parser uses for its error messages.  This is so that the user is not
+    /// text the .NET regex parser uses for its error messages.  This is so that the user is not
     /// confused when they use the IDE vs running the regex by getting different messages for the
     /// same issue.
     ///
     /// Note2: the above invariants make life difficult at times.  This happens due to the fact that
-    /// the .net parser is multi-pass.  Meaning it does a first scan (which may report errors), then
+    /// the .NET parser is multi-pass.  Meaning it does a first scan (which may report errors), then
     /// does the full parse.  This means that it might report an error in a later location during
     /// the initial scan than it would during the parse.  We replicate that behavior to follow the
     /// second invariant.
     ///
     /// Note3: It would be nice if we could check these invariants at runtime, so we could control
-    /// our behavior by the behavior of the real .net regex engine.  For example, if the .net regex
+    /// our behavior by the behavior of the real .NET regex engine.  For example, if the .NET regex
     /// engine did not report any issues, we could suppress any diagnostics we generated and we
     /// could log an NFW to record which pattern we deviated on so we could fix the issue for a
-    /// future release.  However, we cannot do this as the .net regex engine has no guarantees about
+    /// future release.  However, we cannot do this as the .NET regex engine has no guarantees about
     /// its performance characteristics.  For example, certain regex patterns might end up causing
-    /// that engine to consume unbounded amounts of CPU and memory.  This is because the .net regex
+    /// that engine to consume unbounded amounts of CPU and memory.  This is because the .NET regex
     /// engine is not just a parser, but something that builds an actual recognizer using techniques
     /// that are not necessarily bounded.  As such, while we test ourselves around it during our
     /// tests, we cannot do the same at runtime as part of the IDE.
@@ -67,7 +69,7 @@ namespace Microsoft.CodeAnalysis.EmbeddedLanguages.RegularExpressions
     /// This parser was based off the corefx RegexParser based at:
     /// https://github.com/dotnet/corefx/blob/f759243d724f462da0bcef54e86588f8a55352c6/src/System.Text.RegularExpressions/src/System/Text/RegularExpressions/RegexParser.cs#L1
     ///
-    /// Note4: The .Net parser itself changes over time (for example to fix behavior that even it
+    /// Note4: The .NET parser itself changes over time (for example to fix behavior that even it
     /// thinks is buggy).  When this happens, we have to make a choice as to which behavior to
     /// follow. In general, the overall principle is that we should follow the more lenient
     /// behavior.  If we end up taking the more strict interpretation we risk giving people an error
@@ -104,7 +106,7 @@ namespace Microsoft.CodeAnalysis.EmbeddedLanguages.RegularExpressions
         /// produce the next token after that.
         /// </summary>
         /// <param name="allowTrivia">Whether or not trivia is allowed on the next token
-        /// produced.  In the .net parser trivia is only allowed on a few constructs,
+        /// produced.  In the .NET parser trivia is only allowed on a few constructs,
         /// and our parser mimics that behavior.  Note that even if trivia is allowed,
         /// the type of trivia that can be scanned depends on the current RegexOptions.
         /// For example, if <see cref="RegexOptions.IgnorePatternWhitespace"/> is currently
@@ -135,7 +137,7 @@ namespace Microsoft.CodeAnalysis.EmbeddedLanguages.RegularExpressions
                 // to then parse the tree again, as the captures will affect how we interpret
                 // certain things (i.e. escape references) and what errors will be reported.
                 //
-                // This is necessary as .net regexes allow references to *future* captures.
+                // This is necessary as .NET regexes allow references to *future* captures.
                 // As such, we don't know when we're seeing a reference if it's to something
                 // that exists or not.
                 var tree1 = new RegexParser(text, options,
@@ -235,7 +237,7 @@ namespace Microsoft.CodeAnalysis.EmbeddedLanguages.RegularExpressions
         /// <summary>
         /// Parses out code of the form: ...|...|...
         /// This is the type of code you have at the top level of a regex, or inside any grouping
-        /// contruct.  Note that sequences can be empty in .net regex.  i.e. the following is legal:
+        /// contruct.  Note that sequences can be empty in .NET regex.  i.e. the following is legal:
         /// 
         ///     ...||...
         /// 
@@ -257,7 +259,7 @@ namespace Microsoft.CodeAnalysis.EmbeddedLanguages.RegularExpressions
 
         private RegexSequenceNode ParseSequence(bool consumeCloseParen)
         {
-            var builder = ArrayBuilder<RegexExpressionNode>.GetInstance();
+            using var _ = ArrayBuilder<RegexExpressionNode>.GetInstance(out var builder);
             while (ShouldConsumeSequenceElement(consumeCloseParen))
             {
                 var last = builder.Count == 0 ? null : builder.Last();
@@ -269,7 +271,6 @@ namespace Microsoft.CodeAnalysis.EmbeddedLanguages.RegularExpressions
             // try to merge that into one single text node.
             var sequence = ArrayBuilder<RegexExpressionNode>.GetInstance();
             MergeTextNodes(builder, sequence);
-            builder.Free();
 
             return new RegexSequenceNode(sequence.ToImmutableAndFree());
         }
@@ -279,7 +280,7 @@ namespace Microsoft.CodeAnalysis.EmbeddedLanguages.RegularExpressions
             // Iterate all the nodes in the sequence we have, adding them directly to
             // `final` if they are not text nodes.  If they are text nodes, we attempt
             // to keep merging them with any following text nodes as long as well.
-            for (int index = 0; index < list.Count;)
+            for (var index = 0; index < list.Count;)
             {
                 var current = list[index];
                 if (current.Kind != RegexKind.Text)
@@ -394,14 +395,14 @@ namespace Microsoft.CodeAnalysis.EmbeddedLanguages.RegularExpressions
                 return current;
             }
 
-            switch (_currentToken.Kind)
+            return _currentToken.Kind switch
             {
-                case RegexKind.AsteriskToken: return ParseZeroOrMoreQuantifier(current);
-                case RegexKind.PlusToken: return ParseOneOrMoreQuantifier(current);
-                case RegexKind.QuestionToken: return ParseZeroOrOneQuantifier(current);
-                case RegexKind.OpenBraceToken: return TryParseNumericQuantifier(current, _currentToken);
-                default: return current;
-            }
+                RegexKind.AsteriskToken => ParseZeroOrMoreQuantifier(current),
+                RegexKind.PlusToken => ParseOneOrMoreQuantifier(current),
+                RegexKind.QuestionToken => ParseZeroOrOneQuantifier(current),
+                RegexKind.OpenBraceToken => TryParseNumericQuantifier(current, _currentToken),
+                _ => current,
+            };
         }
 
         private RegexExpressionNode TryParseLazyQuantifier(RegexQuantifierNode quantifier)
@@ -853,7 +854,7 @@ namespace Microsoft.CodeAnalysis.EmbeddedLanguages.RegularExpressions
         private RegexConditionalGroupingNode ParseConditionalExpressionGrouping(
             RegexToken openParenToken, RegexToken questionToken, RegexToken innerOpenParenToken)
         {
-            // Reproduce very specific errors the .net regex parser looks for.  Technically,
+            // Reproduce very specific errors the .NET regex parser looks for.  Technically,
             // we would error out in these cases no matter what.  However, it means we can
             // stringently enforce that our parser produces the same errors as the native one.
             //
@@ -1217,32 +1218,6 @@ namespace Microsoft.CodeAnalysis.EmbeddedLanguages.RegularExpressions
 
         private RegexBaseCharacterClassNode ParseCharacterClass()
         {
-            // Note: ScanCharClass is one of the strangest function in the .net regex parser. Code
-            // for it is here:
-            // https://github.com/dotnet/corefx/blob/6ae0da1563e6e701bac61012c62ede8f8737f065/src/System.Text.RegularExpressions/src/System/Text/RegularExpressions/RegexParser.cs#L498
-            //
-            // It has certain behaviors that were probably not intentional, but which we try to
-            // replicate.  Specifically, it looks like it was *intended* to just read components
-            // like simple characters ('a'), char-class-escape ('\s' and the like), ranges
-            // ('component-component'), and subtractions ('-[charclass]').
-            //
-            // And, it *looks* like it intended that if it ran into a range, it would check that the
-            // components on the left and right of the '-' made sense (i.e. you could have 'a-b' but
-            // not 'b-a').
-            //
-            // *However*, the way it is actually written, it does not have that behavior.  Instead,
-            // what it ends up doing is subtly different.  Specifically, in this switch:
-            // https://github.com/dotnet/corefx/blob/6ae0da1563e6e701bac61012c62ede8f8737f065/src/System.Text.RegularExpressions/src/System/Text/RegularExpressions/RegexParser.cs#L531
-            //
-            // In this switch, if it encounters a '\-' it immediately 'continues', effectively
-            // ignoring that character on the right side of a character range.  So, if you had
-            // ```[#-\-b]```, then this *should* be treated as the character class containing
-            // the range of character from '#' to '-', unioned with the character 'b'.  However,
-            // .net will interpret this as the character class containing the range of characters
-            // from '#' to 'b'.  We follow .Net here to keep our errors in sync with them.
-            //
-            // See the comment about this in ParseRightSideOfCharacterClassRange
-
             var openBracketToken = _currentToken;
             Debug.Assert(openBracketToken.Kind == RegexKind.OpenBracketToken);
             var caretToken = CreateMissingToken(RegexKind.CaretToken);
@@ -1262,7 +1237,7 @@ namespace Microsoft.CodeAnalysis.EmbeddedLanguages.RegularExpressions
             // trivia is not allowed anywhere in a character class
             ConsumeCurrentToken(allowTrivia: false);
 
-            var builder = ArrayBuilder<RegexExpressionNode>.GetInstance();
+            using var _ = ArrayBuilder<RegexExpressionNode>.GetInstance(out var builder);
             while (_currentToken.Kind != RegexKind.EndOfFile)
             {
                 Debug.Assert(_currentToken.VirtualChars.Length == 1);
@@ -1282,7 +1257,6 @@ namespace Microsoft.CodeAnalysis.EmbeddedLanguages.RegularExpressions
             // try to merge that into one single text node.
             var contents = ArrayBuilder<RegexExpressionNode>.GetInstance();
             MergeTextNodes(builder, contents);
-            builder.Free();
 
             if (closeBracketToken.IsMissing)
             {
@@ -1322,7 +1296,11 @@ namespace Microsoft.CodeAnalysis.EmbeddedLanguages.RegularExpressions
                 }
                 else
                 {
-                    var right = ParseRightSideOfCharacterClassRange();
+                    // Note that behavior of parsing here changed in .net.  See issue:
+                    // https://github.com/dotnet/corefx/issues/31786
+                    //
+                    // We follow the latest behavior in .net which parses things correctly.
+                    var right = ParseSingleCharacterClassComponent(isFirst: false, afterRangeMinus: true);
 
                     if (TryGetRangeComponentValue(left, out var leftCh) &&
                         TryGetRangeComponentValue(right, out var rightCh) &&
@@ -1503,34 +1481,6 @@ namespace Microsoft.CodeAnalysis.EmbeddedLanguages.RegularExpressions
             return false;
         }
 
-        private RegexExpressionNode ParseRightSideOfCharacterClassRange()
-        {
-            // Parsing the right hand side of a - is extremely strange (and most likely buggy) in
-            // the .net parser. Specifically, the .net parser will still consider itself on the
-            // right side no matter how many escaped dashes it sees.  So, for example, the following
-            // is legal [a-\-] (even though \- is less than 'a'). Similarly, the following are
-            // *illegal* [b-\-a] and [b-\-\-a].  That's because the range that is checked is
-            // actually "b-a", even though it has all the \- escapes in the middle.
-            //
-            // This is tracked with: https://github.com/dotnet/corefx/issues/31786
-
-            var first = ParseSingleCharacterClassComponent(isFirst: false, afterRangeMinus: true);
-            if (!IsEscapedMinus(first))
-            {
-                return first;
-            }
-
-            var builder = ArrayBuilder<RegexExpressionNode>.GetInstance();
-            builder.Add(first);
-
-            while (IsEscapedMinus(builder.Last()) && _currentToken.Kind != RegexKind.CloseBracketToken)
-            {
-                builder.Add(ParseSingleCharacterClassComponent(isFirst: false, afterRangeMinus: true));
-            }
-
-            return new RegexSequenceNode(builder.ToImmutableAndFree());
-        }
-
         private RegexPrimaryExpressionNode ParseSingleCharacterClassComponent(bool isFirst, bool afterRangeMinus)
         {
             if (_currentToken.Kind == RegexKind.BackslashToken && _lexer.Position < _lexer.Text.Length)
@@ -1601,7 +1551,7 @@ namespace Microsoft.CodeAnalysis.EmbeddedLanguages.RegularExpressions
                     ConsumeCurrentToken(allowTrivia: false));
             }
 
-            // From the .net regex code:
+            // From the .NET regex code:
             // This is code for Posix style properties - [:Ll:] or [:IsTibetan:].
             // It currently doesn't do anything other than skip the whole thing!
             if (!afterRangeMinus && _currentToken.Kind == RegexKind.OpenBracketToken && _lexer.IsAt(":"))
@@ -1751,7 +1701,7 @@ namespace Microsoft.CodeAnalysis.EmbeddedLanguages.RegularExpressions
             RegexToken backslashToken, bool allowTriviaAfterEnd)
         {
             // Small deviation: Ecmascript allows references only to captures that precede
-            // this position (unlike .net which allows references in any direction).  However,
+            // this position (unlike .NET which allows references in any direction).  However,
             // because we don't track position, we just consume the entire back-reference.
             //
             // This is addressable if we add position tracking when we locate all the captures.
@@ -1849,7 +1799,7 @@ namespace Microsoft.CodeAnalysis.EmbeddedLanguages.RegularExpressions
             if (capture.IsMissing || closeToken.IsMissing)
             {
                 // Native parser falls back to normal escape scanning, if it doesn't see a capture,
-                // or close brace.  For normal .net regexes, this will then fail later (as \k is not
+                // or close brace.  For normal .NET regexes, this will then fail later (as \k is not
                 // a legal escape), but will succeed for ecmascript regexes.
                 _lexer.Position = afterBackslashPosition;
                 return ParseCharEscape(backslashToken, allowTriviaAfterEnd);
@@ -1985,17 +1935,17 @@ namespace Microsoft.CodeAnalysis.EmbeddedLanguages.RegularExpressions
             {
                 // From: https://github.com/dotnet/corefx/blob/80e220fc7009de0f0611ee6b52d4d5ffd25eb6c7/src/System.Text.RegularExpressions/src/System/Text/RegularExpressions/RegexParser.cs#L1450
 
-                // Note: Roslyn accepts a control escape that current .Net parser does not.
+                // Note: Roslyn accepts a control escape that current .NET parser does not.
                 // Specifically: \c[
                 //
-                // It is a bug that the .Net parser does not support this construct.  The bug was
+                // It is a bug that the .NET parser does not support this construct.  The bug was
                 // reported at: https://github.com/dotnet/corefx/issues/26501 and was fixed for
                 // CoreFx with https://github.com/dotnet/corefx/commit/80e220fc7009de0f0611ee6b52d4d5ffd25eb6c7
                 //
                 // Because it was a bug, we follow the correct behavior.  That means we will not
                 // report a diagnostic for a Regex that someone might run on a previous version of
-                // .Net that ends up throwing at runtime.  That's acceptable.  Our goal is to match
-                // the latest .Net 'correct' behavior.  Not intermediary points with bugs that have
+                // .NET that ends up throwing at runtime.  That's acceptable.  Our goal is to match
+                // the latest .NET 'correct' behavior.  Not intermediary points with bugs that have
                 // since been fixed.
 
                 // \ca interpreted as \cA

@@ -1,6 +1,11 @@
-﻿// Copyright (c) Microsoft.  All Rights Reserved.  Licensed under the Apache License, Version 2.0.  See License.txt in the project root for license information.
+﻿// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
+
+#nullable enable
 
 using System.Collections.Immutable;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using Microsoft.CodeAnalysis.CodeStyle;
 using Microsoft.CodeAnalysis.CSharp.CodeStyle;
@@ -9,6 +14,7 @@ using Microsoft.CodeAnalysis.CSharp.ExtractMethod;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Diagnostics;
 using Microsoft.CodeAnalysis.Shared.Extensions;
+using Roslyn.Utilities;
 
 namespace Microsoft.CodeAnalysis.CSharp.UsePatternMatching
 {
@@ -26,11 +32,11 @@ namespace Microsoft.CodeAnalysis.CSharp.UsePatternMatching
     [DiagnosticAnalyzer(LanguageNames.CSharp)]
     internal partial class CSharpAsAndNullCheckDiagnosticAnalyzer : AbstractBuiltInCodeStyleDiagnosticAnalyzer
     {
-        public override bool OpenFileOnly(Workspace workspace) => false;
-
         public CSharpAsAndNullCheckDiagnosticAnalyzer()
             : base(IDEDiagnosticIds.InlineAsTypeCheckId,
-                    new LocalizableResourceString(
+                   CSharpCodeStyleOptions.PreferPatternMatchingOverAsWithNullCheck,
+                   LanguageNames.CSharp,
+                   new LocalizableResourceString(
                         nameof(FeaturesResources.Use_pattern_matching), FeaturesResources.ResourceManager, typeof(FeaturesResources)))
         {
         }
@@ -38,7 +44,9 @@ namespace Microsoft.CodeAnalysis.CSharp.UsePatternMatching
         protected override void InitializeWorker(AnalysisContext context)
             => context.RegisterSyntaxNodeAction(SyntaxNodeAction,
                 SyntaxKind.EqualsExpression,
-                SyntaxKind.NotEqualsExpression);
+                SyntaxKind.NotEqualsExpression,
+                SyntaxKind.IsExpression,
+                SyntaxKind.IsPatternExpression);
 
         private void SyntaxNodeAction(SyntaxNodeAnalysisContext syntaxContext)
         {
@@ -54,28 +62,29 @@ namespace Microsoft.CodeAnalysis.CSharp.UsePatternMatching
 
             var options = syntaxContext.Options;
             var cancellationToken = syntaxContext.CancellationToken;
-            var optionSet = options.GetDocumentOptionSetAsync(syntaxTree, cancellationToken).GetAwaiter().GetResult();
-            if (optionSet == null)
-            {
-                return;
-            }
 
-            var styleOption = optionSet.GetOption(CSharpCodeStyleOptions.PreferPatternMatchingOverAsWithNullCheck);
+            var styleOption = options.GetOption(CSharpCodeStyleOptions.PreferPatternMatchingOverAsWithNullCheck, syntaxTree, cancellationToken);
             if (!styleOption.Value)
             {
                 // Bail immediately if the user has disabled this feature.
                 return;
             }
 
-            var comparison = (BinaryExpressionSyntax)node;
-            var operand = GetNullCheckOperand(comparison.Left, comparison.Right)?.WalkDownParentheses();
+            var comparison = (ExpressionSyntax)node;
+            var (comparisonLeft, comparisonRight) = comparison switch
+            {
+                BinaryExpressionSyntax binaryExpression => (binaryExpression.Left, (SyntaxNode)binaryExpression.Right),
+                IsPatternExpressionSyntax isPattern => (isPattern.Expression, isPattern.Pattern),
+                _ => throw ExceptionUtilities.Unreachable,
+            };
+            var operand = GetNullCheckOperand(comparisonLeft, comparison.Kind(), comparisonRight)?.WalkDownParentheses();
             if (operand == null)
             {
                 return;
             }
 
             var semanticModel = syntaxContext.SemanticModel;
-            if (operand.IsKind(SyntaxKind.CastExpression, out CastExpressionSyntax castExpression))
+            if (operand.IsKind(SyntaxKind.CastExpression, out CastExpressionSyntax? castExpression))
             {
                 // Unwrap object cast
                 var castType = semanticModel.GetTypeInfo(castExpression.Type).Type;
@@ -91,9 +100,9 @@ namespace Microsoft.CodeAnalysis.CSharp.UsePatternMatching
             }
 
             if (!TryGetTypeCheckParts(semanticModel, operand,
-                    out VariableDeclaratorSyntax declarator,
-                    out BinaryExpressionSyntax asExpression,
-                    out ILocalSymbol localSymbol))
+                    out var declarator,
+                    out var asExpression,
+                    out var localSymbol))
             {
                 return;
             }
@@ -168,7 +177,7 @@ namespace Microsoft.CodeAnalysis.CSharp.UsePatternMatching
                     break;
                 }
 
-                if (descendentNode.IsKind(SyntaxKind.IdentifierName, out IdentifierNameSyntax identifierName))
+                if (descendentNode.IsKind(SyntaxKind.IdentifierName, out IdentifierNameSyntax? identifierName))
                 {
                     // Check if this is a 'write' to the asOperand.
                     if (identifierName.Identifier.ValueText == asOperand?.Name &&
@@ -211,9 +220,9 @@ namespace Microsoft.CodeAnalysis.CSharp.UsePatternMatching
         private static bool TryGetTypeCheckParts(
             SemanticModel semanticModel,
             SyntaxNode operand,
-            out VariableDeclaratorSyntax declarator,
-            out BinaryExpressionSyntax asExpression,
-            out ILocalSymbol localSymbol)
+            [NotNullWhen(true)] out VariableDeclaratorSyntax? declarator,
+            [NotNullWhen(true)] out BinaryExpressionSyntax? asExpression,
+            [NotNullWhen(true)] out ILocalSymbol? localSymbol)
         {
             switch (operand.Kind())
             {
@@ -242,7 +251,7 @@ namespace Microsoft.CodeAnalysis.CSharp.UsePatternMatching
                         // if ((x = e as T) != null) F(x);
                         var assignment = (AssignmentExpressionSyntax)operand;
                         if (!assignment.Right.IsKind(SyntaxKind.AsExpression, out asExpression) ||
-                            !assignment.Left.IsKind(SyntaxKind.IdentifierName, out IdentifierNameSyntax identifier))
+                            !assignment.Left.IsKind(SyntaxKind.IdentifierName, out IdentifierNameSyntax? identifier))
                         {
                             break;
                         }
@@ -265,23 +274,43 @@ namespace Microsoft.CodeAnalysis.CSharp.UsePatternMatching
         private static bool TryFindVariableDeclarator(
             SemanticModel semanticModel,
             IdentifierNameSyntax identifier,
-            out ILocalSymbol localSymbol,
-            out VariableDeclaratorSyntax declarator)
+            [NotNullWhen(true)] out ILocalSymbol? localSymbol,
+            [NotNullWhen(true)] out VariableDeclaratorSyntax? declarator)
         {
             localSymbol = semanticModel.GetSymbolInfo(identifier).Symbol as ILocalSymbol;
             declarator = localSymbol?.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax() as VariableDeclaratorSyntax;
-            return declarator != null;
+            return localSymbol != null && declarator != null;
         }
 
-        private static ExpressionSyntax GetNullCheckOperand(ExpressionSyntax left, ExpressionSyntax right)
+        private static ExpressionSyntax? GetNullCheckOperand(ExpressionSyntax left, SyntaxKind comparisonKind, SyntaxNode right)
         {
             if (left.IsKind(SyntaxKind.NullLiteralExpression))
             {
-                return right;
+                // null == x
+                // null != x
+                return (ExpressionSyntax)right;
             }
 
             if (right.IsKind(SyntaxKind.NullLiteralExpression))
             {
+                // x == null
+                // x != null
+                return left;
+            }
+
+            if (right.IsKind(SyntaxKind.PredefinedType, out PredefinedTypeSyntax? predefinedType)
+                && predefinedType.Keyword.IsKind(SyntaxKind.ObjectKeyword)
+                && comparisonKind == SyntaxKind.IsExpression)
+            {
+                // x is object
+                return left;
+            }
+
+            if (right.IsKind(SyntaxKind.ConstantPattern, out ConstantPatternSyntax? constantPattern)
+                && constantPattern.Expression.IsKind(SyntaxKind.NullLiteralExpression)
+                && comparisonKind == SyntaxKind.IsPatternExpression)
+            {
+                // x is null
                 return left;
             }
 

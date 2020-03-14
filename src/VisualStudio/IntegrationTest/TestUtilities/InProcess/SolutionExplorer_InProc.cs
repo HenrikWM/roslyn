@@ -1,4 +1,6 @@
-﻿// Copyright (c) Microsoft.  All Rights Reserved.  Licensed under the Apache License, Version 2.0.  See License.txt in the project root for license information.
+﻿// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 using System;
 using System.Collections.Generic;
@@ -7,12 +9,16 @@ using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Xml.Linq;
 using EnvDTE80;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.Debugging;
 using Microsoft.CodeAnalysis.EditAndContinue;
 using Microsoft.CodeAnalysis.Shared.TestHooks;
+using Microsoft.VisualStudio.CodingConventions;
 using Microsoft.VisualStudio.IntegrationTest.Utilities.Input;
+using Microsoft.VisualStudio.LanguageServices;
 using Microsoft.VisualStudio.ProjectSystem.Properties;
 using Microsoft.VisualStudio.Shell;
 using Microsoft.VisualStudio.Shell.Interop;
@@ -21,6 +27,7 @@ using Microsoft.VisualStudio.TextManager.Interop;
 using NuGet.SolutionRestoreManager;
 using Roslyn.Hosting.Diagnostics.Waiters;
 using VSLangProj;
+using Task = System.Threading.Tasks.Task;
 
 namespace Microsoft.VisualStudio.IntegrationTest.Utilities.InProcess
 {
@@ -30,8 +37,8 @@ namespace Microsoft.VisualStudio.IntegrationTest.Utilities.InProcess
         private Solution2 _solution;
         private string _fileName;
 
-        private static readonly IDictionary<string, string> _csharpProjectTemplates = InitializeCSharpProjectTemplates();
-        private static readonly IDictionary<string, string> _visualBasicProjectTemplates = InitializeVisualBasicProjectTemplates();
+        private static readonly Lazy<IDictionary<string, string>> _csharpProjectTemplates = new Lazy<IDictionary<string, string>>(InitializeCSharpProjectTemplates);
+        private static readonly Lazy<IDictionary<string, string>> _visualBasicProjectTemplates = new Lazy<IDictionary<string, string>>(InitializeVisualBasicProjectTemplates);
 
         private SolutionExplorer_InProc()
         {
@@ -349,13 +356,13 @@ namespace Microsoft.VisualStudio.IntegrationTest.Utilities.InProcess
         private string GetProjectTemplatePath(string projectTemplate, string languageName)
         {
             if (languageName.Equals("csharp", StringComparison.OrdinalIgnoreCase) &&
-               _csharpProjectTemplates.TryGetValue(projectTemplate, out var csharpProjectTemplate))
+               _csharpProjectTemplates.Value.TryGetValue(projectTemplate, out var csharpProjectTemplate))
             {
                 return _solution.GetProjectTemplate(csharpProjectTemplate, languageName);
             }
 
             if (languageName.Equals("visualbasic", StringComparison.OrdinalIgnoreCase) &&
-               _visualBasicProjectTemplates.TryGetValue(projectTemplate, out var visualBasicProjectTemplate))
+               _visualBasicProjectTemplates.Value.TryGetValue(projectTemplate, out var visualBasicProjectTemplate))
             {
                 return _solution.GetProjectTemplate(visualBasicProjectTemplate, languageName);
             }
@@ -368,7 +375,7 @@ namespace Microsoft.VisualStudio.IntegrationTest.Utilities.InProcess
             var directoriesToDelete = new List<string>();
             var dte = GetDTE();
 
-            InvokeOnUIThread(() =>
+            InvokeOnUIThread(cancellationToken =>
             {
                 if (dte.Solution != null)
                 {
@@ -400,7 +407,7 @@ namespace Microsoft.VisualStudio.IntegrationTest.Utilities.InProcess
                 _sendKeys.Send(VirtualKey.Escape);
 
                 dte.Debugger.TerminateAll();
-                WaitForDesignMode();
+                WaitForDesignMode(dte);
             }
 
             CloseSolution();
@@ -412,10 +419,9 @@ namespace Microsoft.VisualStudio.IntegrationTest.Utilities.InProcess
             }
         }
 
-        private static void WaitForDesignMode()
+        private static void WaitForDesignMode(EnvDTE.DTE dte)
         {
-            var stopwatch = Stopwatch.StartNew();
-
+#if TODO// https://github.com/dotnet/roslyn/issues/35965
             // This delay was originally added to address test failures in BasicEditAndContinue. When running
             // multiple tests in sequence, situations were observed where the Edit and Continue state was not reset:
             //
@@ -428,17 +434,28 @@ namespace Microsoft.VisualStudio.IntegrationTest.Utilities.InProcess
             // state believing a debugger session was active.
             //
             // This delay should be replaced with a proper wait condition once the correct one is determined.
-            var editAndContinueService = GetComponentModelService<IEditAndContinueService>();
-            do
+            var debugService = GetComponentModelService<VisualStudioWorkspace>().Services.GetRequiredService<IDebuggingWorkspaceService>();
+            using (var debugSessionEndedEvent = new ManualResetEventSlim(initialState: false))
             {
-                if (stopwatch.Elapsed >= Helper.HangMitigatingTimeout)
+                debugService.BeforeDebuggingStateChanged += (_, e) =>
+                {
+                    if (e.After == DebuggingState.Design)
+                    {
+                        debugSessionEndedEvent.Set();
+                    }
+                };
+
+                if (dte.Debugger.CurrentMode == EnvDTE.dbgDebugMode.dbgDesignMode)
+                {
+                    return;
+                }
+
+                if (!debugSessionEndedEvent.Wait(Helper.HangMitigatingTimeout))
                 {
                     throw new TimeoutException("Failed to enter design mode in a timely manner.");
                 }
-
-                Thread.Yield();
             }
-            while (editAndContinueService?.DebuggingSession != null);
+#endif
         }
 
         private void CloseSolution()
@@ -486,7 +503,7 @@ namespace Microsoft.VisualStudio.IntegrationTest.Utilities.InProcess
 
             public void Dispose()
             {
-                InvokeOnUIThread(() =>
+                InvokeOnUIThread(cancellationToken =>
                 {
                     ErrorHandler.ThrowOnFailure(_solution.UnadviseSolutionEvents(_cookie));
                 });
@@ -580,11 +597,11 @@ namespace Microsoft.VisualStudio.IntegrationTest.Utilities.InProcess
         {
             void SetText(string text)
             {
-                InvokeOnUIThread(() =>
+                InvokeOnUIThread(cancellationToken =>
                 {
                     // The active text view might not have finished composing yet, waiting for the application to 'idle'
                     // means that it is done pumping messages (including WM_PAINT) and the window should return the correct text view
-                    WaitForApplicationIdle();
+                    WaitForApplicationIdle(Helper.HangMitigatingTimeout);
 
                     var vsTextManager = GetGlobalService<SVsTextManager, IVsTextManager>();
                     var hresult = vsTextManager.GetActiveView(fMustHaveFocus: 1, pBuffer: null, ppView: out var vsTextView);
@@ -888,7 +905,7 @@ namespace Microsoft.VisualStudio.IntegrationTest.Utilities.InProcess
 
         public void OpenFileWithDesigner(string projectName, string relativeFilePath)
         {
-            InvokeOnUIThread(() =>
+            InvokeOnUIThread(cancellationToken =>
             {
                 var filePath = GetAbsolutePathForProjectRelativeFilePath(projectName, relativeFilePath);
                 VsShellUtilities.OpenDocument(ServiceProvider.GlobalProvider, filePath, VSConstants.LOGVIEWID.Designer_guid, out _, out _, out var windowFrame, out _);
@@ -920,7 +937,7 @@ namespace Microsoft.VisualStudio.IntegrationTest.Utilities.InProcess
 
         private void CloseFile(string projectName, string relativeFilePath, Guid logicalView, bool saveFile)
         {
-            InvokeOnUIThread(() =>
+            InvokeOnUIThread(cancellationToken =>
             {
                 var filePath = GetAbsolutePathForProjectRelativeFilePath(projectName, relativeFilePath);
                 if (!VsShellUtilities.IsDocumentOpen(ServiceProvider.GlobalProvider, filePath, logicalView, out _, out _, out var windowFrame))
@@ -1004,8 +1021,12 @@ namespace Microsoft.VisualStudio.IntegrationTest.Utilities.InProcess
 
         public bool RestoreNuGetPackages(string projectName)
         {
-            var solutionRestoreService = InvokeOnUIThread(() => GetComponentModel().GetExtensions<IVsSolutionRestoreService2>().Single());
-            return solutionRestoreService.NominateProjectAsync(GetProject(projectName).FullName, CancellationToken.None).Result;
+            using var cancellationTokenSource = new CancellationTokenSource(Helper.HangMitigatingTimeout);
+
+            var solutionRestoreService = InvokeOnUIThread(cancellationToken => GetComponentModel().GetExtensions<IVsSolutionRestoreService2>().Single());
+            var nominateProjectTask = solutionRestoreService.NominateProjectAsync(GetProject(projectName).FullName, cancellationTokenSource.Token);
+            nominateProjectTask.Wait(cancellationTokenSource.Token);
+            return nominateProjectTask.Result;
         }
 
         public void SaveAll()
@@ -1123,6 +1144,44 @@ namespace Microsoft.VisualStudio.IntegrationTest.Utilities.InProcess
             }
 
             return null;
+        }
+
+        private CodingConventionsChangedWatcher _codingConventionsChangedWatcher;
+
+        public void BeginWatchForCodingConventionsChange(string projectName, string relativeFilePath)
+        {
+            var filePath = GetAbsolutePathForProjectRelativeFilePath(projectName, relativeFilePath);
+            _codingConventionsChangedWatcher = new CodingConventionsChangedWatcher(filePath);
+        }
+
+        public void EndWaitForCodingConventionsChange(TimeSpan timeout)
+        {
+            var watcher = Interlocked.Exchange(ref _codingConventionsChangedWatcher, null);
+            if (watcher is null)
+            {
+                throw new InvalidOperationException();
+            }
+
+            watcher.Changed.Wait(timeout);
+        }
+
+        private class CodingConventionsChangedWatcher
+        {
+            private readonly TaskCompletionSource<object> _taskCompletionSource = new TaskCompletionSource<object>();
+            private readonly ICodingConventionContext _codingConventionContext;
+
+            public CodingConventionsChangedWatcher(string filePath)
+            {
+                var codingConventionsManager = GetComponentModelService<ICodingConventionsManager>();
+                _codingConventionContext = codingConventionsManager.GetConventionContextAsync(filePath, CancellationToken.None).Result;
+                _codingConventionContext.CodingConventionsChangedAsync += (sender, e) =>
+                {
+                    _taskCompletionSource.SetResult(null);
+                    return Task.CompletedTask;
+                };
+            }
+
+            public Task Changed => _taskCompletionSource.Task;
         }
     }
 }

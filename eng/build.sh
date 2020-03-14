@@ -5,6 +5,9 @@
 # Stop script if unbound variable found (use ${var:-} if intentional)
 set -u
 
+# Stop script if subcommand fails
+set -e 
+
 usage()
 {
   echo "Common settings:"
@@ -31,6 +34,7 @@ usage()
   echo "  --skipAnalyzers            Do not run analyzers during build operations"
   echo "  --prepareMachine           Prepare machine for CI run, clean up processes after build"
   echo "  --warnAsError              Treat all warnings as errors"
+  echo "  --sourceBuild              Simulate building for source-build"
   echo ""
   echo "Command line arguments starting with '/p:' are passed through to MSBuild."
 }
@@ -65,6 +69,7 @@ prepare_machine=false
 warn_as_error=false
 properties=""
 disable_parallel_restore=false
+source_build=false
 
 docker=false
 args=""
@@ -121,6 +126,8 @@ while [[ $# > 0 ]]; do
       ;;
     --bootstrap)
       bootstrap=true
+      # Bootstrap requires restore
+      restore=true
       ;;
     --skipanalyzers)
       skip_analyzers=true
@@ -135,6 +142,9 @@ while [[ $# > 0 ]]; do
       docker=true
       shift
       continue
+      ;;
+    --sourcebuild)
+      source_build=true
       ;;
     /p:*)
       properties="$properties $1"
@@ -184,7 +194,7 @@ function MakeBootstrapBuild {
   local package_name="Microsoft.Net.Compilers.Toolset"
   local project_path=src/NuGet/$package_name/$package_name.Package.csproj
 
-  dotnet pack -nologo "$project_path" -p:ContinuousIntegrationBuild=$ci -p:DotNetUseShippingVersions=true -p:InitialDefineConstants=BOOTSTRAP -p:PackageOutputPath="$dir"
+  dotnet pack -nologo "$project_path" -p:ContinuousIntegrationBuild=$ci -p:DotNetUseShippingVersions=true -p:InitialDefineConstants=BOOTSTRAP -p:PackageOutputPath="$dir" -bl:"$log_dir/Bootstrap.binlog"
   unzip "$dir/$package_name.*.nupkg" -d "$dir"
   chmod -R 755 "$dir"
 
@@ -226,30 +236,25 @@ function BuildSolution {
     disable_parallel_restore=true
   fi
 
-  local quiet_restore=""
-  if [[ "$ci" != true ]]; then
-    quiet_restore=true
-  fi
-
   local test=false
   local test_runtime=""
   local mono_tool=""
+  local test_runtime_args=""
   if [[ "$test_mono" == true ]]; then
-    
-    mono_path="$scriptroot/invoke-mono.sh"
-    # Echo out the mono version to the comamnd line so it's visible in CI logs. It's not fixed
+    mono_path=`command -v mono`
+    # Echo out the mono version to the command line so it's visible in CI logs. It's not fixed
     # as we're using a feed vs. a hard coded package.
     if [[ "$ci" == true ]]; then
       mono --version
-      chmod +x "$mono_path"
     fi
 
     test=true
     test_runtime="/p:TestRuntime=Mono"
     mono_tool="/p:MonoTool=\"$mono_path\""
+    test_runtime_args="--debug"
   elif [[ "$test_core_clr" == true ]]; then
     test=true
-    test_runtime="/p:TestRuntime=Core"
+    test_runtime="/p:TestRuntime=Core /p:TestTargetFrameworks=netcoreapp3.1"
     mono_tool=""
   fi
 
@@ -271,10 +276,10 @@ function BuildSolution {
     /p:UseRoslynAnalyzers=$enable_analyzers \
     /p:BootstrapBuildPath="$bootstrap_dir" \
     /p:ContinuousIntegrationBuild=$ci \
-    /p:QuietRestore=$quiet_restore \
-    /p:QuietRestoreBinaryLog="$binary_log" \
     /p:TreatWarningsAsErrors=true \
     /p:RestoreDisableParallel=$disable_parallel_restore \
+    /p:TestRuntimeAdditionalArguments=$test_runtime_args \
+    /p:DotNetBuildFromSource=$source_build \
     $test_runtime \
     $mono_tool \
     $properties

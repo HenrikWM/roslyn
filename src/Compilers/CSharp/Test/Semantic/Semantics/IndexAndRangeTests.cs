@@ -1,4 +1,6 @@
-﻿// Copyright (c) Microsoft.  All Rights Reserved.  Licensed under the Apache License, Version 2.0.  See License.txt in the project root for license information.
+﻿// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 using System.Linq;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -14,6 +16,592 @@ namespace Microsoft.CodeAnalysis.CSharp.UnitTests
         private const string RangeStartAtSignature = "System.Range System.Range.StartAt(System.Index start)";
         private const string RangeEndAtSignature = "System.Range System.Range.EndAt(System.Index end)";
         private const string RangeAllSignature = "System.Range System.Range.All.get";
+
+        [Fact]
+        public void RangeBadIndexerTypes()
+        {
+            var src = @"
+using System;
+
+public static class Program {
+    public static void Main() {
+        var a = new Span<byte>();
+        var b = a[""str2""];
+        var c = a[null];
+        var d = a[Main()];
+        var e = a[new object()];
+        Console.WriteLine(zzz[0]);
+    }
+}";
+            var comp = CreateCompilationWithIndexAndRangeAndSpan(src);
+            comp.VerifyDiagnostics(
+                // (7,19): error CS1503: Argument 1: cannot convert from 'string' to 'int'
+                //         var b = a["str2"];
+                Diagnostic(ErrorCode.ERR_BadArgType, @"""str2""").WithArguments("1", "string", "int").WithLocation(7, 19),
+                // (8,19): error CS1503: Argument 1: cannot convert from '<null>' to 'int'
+                //         var c = a[null];
+                Diagnostic(ErrorCode.ERR_BadArgType, "null").WithArguments("1", "<null>", "int").WithLocation(8, 19),
+                // (9,19): error CS1503: Argument 1: cannot convert from 'void' to 'int'
+                //         var d = a[Main()];
+                Diagnostic(ErrorCode.ERR_BadArgType, "Main()").WithArguments("1", "void", "int").WithLocation(9, 19),
+                // (10,19): error CS1503: Argument 1: cannot convert from 'object' to 'int'
+                //         var e = a[new object()];
+                Diagnostic(ErrorCode.ERR_BadArgType, "new object()").WithArguments("1", "object", "int").WithLocation(10, 19),
+                // (11,27): error CS0103: The name 'zzz' does not exist in the current context
+                //         Console.WriteLine(zzz[0]);
+                Diagnostic(ErrorCode.ERR_NameNotInContext, "zzz").WithArguments("zzz").WithLocation(11, 27));
+        }
+
+        [Fact]
+        public void PatternIndexRangeLangVer()
+        {
+            var src = @"
+using System;
+struct S
+{
+    public int Length => 0;
+    public int Slice(int x, int y) => 0;
+}
+class C
+{
+    void M(string s, Index i, Range r)
+    {
+        _ = s[i];
+        _ = s[r];
+        _ = new S()[r];
+    }
+}";
+            var comp = CreateCompilationWithIndexAndRange(src);
+            comp.VerifyDiagnostics();
+            comp = CreateCompilationWithIndexAndRange(src, parseOptions: TestOptions.Regular7_3);
+            comp.VerifyDiagnostics(
+                // (12,13): error CS8652: The feature 'index operator' is not available in C# 7.3. Please use language version 8.0 or greater.
+                //         _ = s[i];
+                Diagnostic(ErrorCode.ERR_FeatureNotAvailableInVersion7_3, "s[i]").WithArguments("index operator", "8.0").WithLocation(12, 13),
+                // (13,13): error CS8652: The feature 'index operator' is not available in C# 7.3. Please use language version 8.0 or greater.
+                //         _ = s[r];
+                Diagnostic(ErrorCode.ERR_FeatureNotAvailableInVersion7_3, "s[r]").WithArguments("index operator", "8.0").WithLocation(13, 13),
+                // (14,13): error CS8652: The feature 'index operator' is not available in C# 7.3. Please use language version 8.0 or greater.
+                //         _ = new S()[r];
+                Diagnostic(ErrorCode.ERR_FeatureNotAvailableInVersion7_3, "new S()[r]").WithArguments("index operator", "8.0").WithLocation(14, 13));
+        }
+
+        [Fact]
+        public void PatternIndexRangeReadOnly_01()
+        {
+            var src = @"
+using System;
+struct S
+{
+    public int this[int i] => 0;
+    public int Length => 0;
+    public int Slice(int x, int y) => 0;
+
+    readonly void M(Index i, Range r)
+    {
+        _ = this[i]; // 1, 2
+        _ = this[r]; // 3, 4
+    }
+}";
+            var comp = CreateCompilationWithIndexAndRange(src);
+            comp.VerifyDiagnostics(
+                // (11,13): warning CS8656: Call to non-readonly member 'S.Length.get' from a 'readonly' member results in an implicit copy of 'this'.
+                //         _ = this[i]; // 1, 2
+                Diagnostic(ErrorCode.WRN_ImplicitCopyInReadOnlyMember, "this").WithArguments("S.Length.get", "this").WithLocation(11, 13),
+                // (11,13): warning CS8656: Call to non-readonly member 'S.this[int].get' from a 'readonly' member results in an implicit copy of 'this'.
+                //         _ = this[i]; // 1, 2
+                Diagnostic(ErrorCode.WRN_ImplicitCopyInReadOnlyMember, "this").WithArguments("S.this[int].get", "this").WithLocation(11, 13),
+                // (12,13): warning CS8656: Call to non-readonly member 'S.Length.get' from a 'readonly' member results in an implicit copy of 'this'.
+                //         _ = this[r]; // 3, 4
+                Diagnostic(ErrorCode.WRN_ImplicitCopyInReadOnlyMember, "this").WithArguments("S.Length.get", "this").WithLocation(12, 13),
+                // (12,13): warning CS8656: Call to non-readonly member 'S.Slice(int, int)' from a 'readonly' member results in an implicit copy of 'this'.
+                //         _ = this[r]; // 3, 4
+                Diagnostic(ErrorCode.WRN_ImplicitCopyInReadOnlyMember, "this").WithArguments("S.Slice(int, int)", "this").WithLocation(12, 13));
+        }
+
+        [Fact]
+        public void PatternIndexRangeReadOnly_02()
+        {
+            var src = @"
+using System;
+struct S
+{
+    public int this[int i] => 0;
+    public readonly int Length => 0;
+    public int Slice(int x, int y) => 0;
+
+    readonly void M(Index i, Range r)
+    {
+        _ = this[i]; // 1
+        _ = this[r]; // 2
+    }
+}";
+            var comp = CreateCompilationWithIndexAndRange(src);
+            comp.VerifyDiagnostics(
+                // (11,13): warning CS8656: Call to non-readonly member 'S.this[int].get' from a 'readonly' member results in an implicit copy of 'this'.
+                //         _ = this[i]; // 1
+                Diagnostic(ErrorCode.WRN_ImplicitCopyInReadOnlyMember, "this").WithArguments("S.this[int].get", "this").WithLocation(11, 13),
+                // (12,13): warning CS8656: Call to non-readonly member 'S.Slice(int, int)' from a 'readonly' member results in an implicit copy of 'this'.
+                //         _ = this[r]; // 2
+                Diagnostic(ErrorCode.WRN_ImplicitCopyInReadOnlyMember, "this").WithArguments("S.Slice(int, int)", "this").WithLocation(12, 13));
+        }
+
+        [Fact]
+        public void PatternIndexRangeReadOnly_03()
+        {
+            var src = @"
+using System;
+struct S
+{
+    public readonly int this[int i] => 0;
+    public int Length => 0;
+    public readonly int Slice(int x, int y) => 0;
+
+    readonly void M(Index i, Range r)
+    {
+        _ = this[i]; // 1
+        _ = this[r]; // 2
+    }
+}";
+            var comp = CreateCompilationWithIndexAndRange(src);
+            comp.VerifyDiagnostics(
+                // (11,13): warning CS8656: Call to non-readonly member 'S.Length.get' from a 'readonly' member results in an implicit copy of 'this'.
+                //         _ = this[i]; // 1
+                Diagnostic(ErrorCode.WRN_ImplicitCopyInReadOnlyMember, "this").WithArguments("S.Length.get", "this").WithLocation(11, 13),
+                // (12,13): warning CS8656: Call to non-readonly member 'S.Length.get' from a 'readonly' member results in an implicit copy of 'this'.
+                //         _ = this[r]; // 2
+                Diagnostic(ErrorCode.WRN_ImplicitCopyInReadOnlyMember, "this").WithArguments("S.Length.get", "this").WithLocation(12, 13));
+        }
+
+        [Fact]
+        public void PatternIndexRangeReadOnly_04()
+        {
+            var src = @"
+using System;
+struct S
+{
+    public readonly int this[int i] => 0;
+    public int Count => 0;
+    public readonly int Slice(int x, int y) => 0;
+
+    readonly void M(Index i, Range r)
+    {
+        _ = this[i]; // 1
+        _ = this[r]; // 2
+    }
+}";
+            var comp = CreateCompilationWithIndexAndRange(src);
+            comp.VerifyDiagnostics(
+                // (11,13): warning CS8656: Call to non-readonly member 'S.Count.get' from a 'readonly' member results in an implicit copy of 'this'.
+                //         _ = this[i]; // 1
+                Diagnostic(ErrorCode.WRN_ImplicitCopyInReadOnlyMember, "this").WithArguments("S.Count.get", "this").WithLocation(11, 13),
+                // (12,13): warning CS8656: Call to non-readonly member 'S.Count.get' from a 'readonly' member results in an implicit copy of 'this'.
+                //         _ = this[r]; // 2
+                Diagnostic(ErrorCode.WRN_ImplicitCopyInReadOnlyMember, "this").WithArguments("S.Count.get", "this").WithLocation(12, 13));
+        }
+
+        [Fact]
+        public void PatternIndexRangeReadOnly_05()
+        {
+            var src = @"
+using System;
+struct S
+{
+    public readonly int this[int i] => 0;
+    public readonly int Length => 0;
+    public readonly int Slice(int x, int y) => 0;
+
+    readonly void M(Index i, Range r)
+    {
+        _ = this[i];
+        _ = this[r];
+    }
+}";
+            var comp = CreateCompilationWithIndexAndRange(src);
+            comp.VerifyDiagnostics();
+        }
+
+        [Fact]
+        public void SpanPatternRangeDelegate()
+        {
+            var src = @"
+using System;
+class C
+{
+    void Throws<T>(Func<T> f) { }
+    public static void Main()
+    {
+        string s = ""abcd"";
+        Throws(() => new Span<char>(s.ToCharArray())[0..1]);
+    }
+}";
+            var comp = CreateCompilationWithIndexAndRangeAndSpan(src, TestOptions.ReleaseExe);
+            comp.VerifyDiagnostics(
+                // (9,9): error CS0306: The type 'Span<char>' may not be used as a type argument
+                //         Throws(() => new Span<char>(s.ToCharArray())[0..1]);
+                Diagnostic(ErrorCode.ERR_BadTypeArgument, "Throws").WithArguments("System.Span<char>").WithLocation(9, 9));
+        }
+
+        [Fact]
+        public void PatternIndexNoRefIndexer()
+        {
+            var src = @"
+struct S
+{
+    public int Length => 0;
+    public int this[int i] => 0;
+}
+class C
+{
+    void M(S s)
+    {
+        ref readonly int x = ref s[^2];
+    }
+}";
+            var comp = CreateCompilationWithIndexAndRange(src);
+            comp.VerifyDiagnostics(
+                // (11,34): error CS8156: An expression cannot be used in this context because it may not be passed or returned by reference
+                //         ref readonly int x = ref s[^2];
+                Diagnostic(ErrorCode.ERR_RefReturnLvalueExpected, "s[^2]").WithArguments("S.this[int]").WithLocation(11, 34));
+        }
+
+        [Fact]
+        public void PatternRangeSpanNoReturn()
+        {
+            var src = @"
+using System;
+class C
+{
+    Span<int> M()
+    {
+        Span<int> s1 = stackalloc int[10];
+        Span<int> s2 = s1[0..2];
+        return s2;
+    }
+}";
+            var comp = CreateCompilationWithIndexAndRangeAndSpan(src);
+            comp.VerifyDiagnostics(
+                // (9,16): error CS8352: Cannot use local 's2' in this context because it may expose referenced variables outside of their declaration scope
+                //         return s2;
+                Diagnostic(ErrorCode.ERR_EscapeLocal, "s2").WithArguments("s2").WithLocation(9, 16));
+        }
+
+        [Fact]
+        public void PatternIndexAndRangeLengthInaccessible()
+        {
+            var src = @"
+class B
+{
+    private int Length => 0;
+    public int this[int i] => 0;
+    public int Slice(int i, int j) => 0;
+}
+class C
+{
+    void M(B b)
+    {
+        _ = b[^0];
+        _ = b[0..];
+    }
+}";
+            var comp = CreateCompilationWithIndexAndRange(src);
+            comp.VerifyDiagnostics(
+                // (12,15): error CS1503: Argument 1: cannot convert from 'System.Index' to 'int'
+                //         _ = b[^0];
+                Diagnostic(ErrorCode.ERR_BadArgType, "^0").WithArguments("1", "System.Index", "int").WithLocation(12, 15),
+                // (13,15): error CS1503: Argument 1: cannot convert from 'System.Range' to 'int'
+                //         _ = b[0..];
+                Diagnostic(ErrorCode.ERR_BadArgType, "0..").WithArguments("1", "System.Range", "int").WithLocation(13, 15)
+                );
+        }
+
+        [Fact]
+        public void PatternIndexAndRangeLengthNoGetter()
+        {
+            var src = @"
+class B
+{
+    public int Length { set { } }
+    public int this[int i] => 0;
+    public int Slice(int i, int j) => 0;
+}
+class C
+{
+    void M(B b)
+    {
+        _ = b[^0];
+        _ = b[0..];
+    }
+}";
+            var comp = CreateCompilationWithIndexAndRange(src);
+            comp.VerifyDiagnostics(
+                // (12,15): error CS1503: Argument 1: cannot convert from 'System.Index' to 'int'
+                //         _ = b[^0];
+                Diagnostic(ErrorCode.ERR_BadArgType, "^0").WithArguments("1", "System.Index", "int").WithLocation(12, 15),
+                // (13,15): error CS1503: Argument 1: cannot convert from 'System.Range' to 'int'
+                //         _ = b[0..];
+                Diagnostic(ErrorCode.ERR_BadArgType, "0..").WithArguments("1", "System.Range", "int").WithLocation(13, 15)
+                );
+        }
+
+        [Fact]
+        public void PatternIndexAndRangeGetLengthInaccessible()
+        {
+            var src = @"
+class B
+{
+    public int Length { private get => 0; set { } }
+    public int this[int i] => 0;
+    public int Slice(int i, int j) => 0;
+}
+class C
+{
+    void M(B b)
+    {
+        _ = b[^0];
+        _ = b[0..];
+    }
+}";
+            var comp = CreateCompilationWithIndexAndRange(src);
+            comp.VerifyDiagnostics(
+                // (12,15): error CS1503: Argument 1: cannot convert from 'System.Index' to 'int'
+                //         _ = b[^0];
+                Diagnostic(ErrorCode.ERR_BadArgType, "^0").WithArguments("1", "System.Index", "int").WithLocation(12, 15),
+                // (13,15): error CS1503: Argument 1: cannot convert from 'System.Range' to 'int'
+                //         _ = b[0..];
+                Diagnostic(ErrorCode.ERR_BadArgType, "0..").WithArguments("1", "System.Range", "int").WithLocation(13, 15)
+                );
+        }
+
+        [Fact]
+        public void PatternIndexAndRangePatternMethodsInaccessible()
+        {
+            var src = @"
+class B
+{
+    public int Length => 0;
+    public int this[int i] { private get => 0; set { } }
+    private int Slice(int i, int j) => 0;
+}
+class C
+{
+    void M(B b)
+    {
+        _ = b[^0];
+        _ = b[0..];
+    }
+}";
+            var comp = CreateCompilationWithIndexAndRange(src);
+            comp.VerifyDiagnostics(
+                // (12,13): error CS0271: The property or indexer 'B.this[int]' cannot be used in this context because the get accessor is inaccessible
+                //         _ = b[^0];
+                Diagnostic(ErrorCode.ERR_InaccessibleGetter, "b[^0]").WithArguments("B.this[int]").WithLocation(12, 13),
+                // (13,15): error CS1503: Argument 1: cannot convert from 'System.Range' to 'int'
+                //         _ = b[0..];
+                Diagnostic(ErrorCode.ERR_BadArgType, "0..").WithArguments("1", "System.Range", "int").WithLocation(13, 15)
+                );
+        }
+
+        [Fact]
+        public void PatternIndexAndRangeStaticLength()
+        {
+            var src = @"
+class B
+{
+    public static int Length => 0;
+    public int this[int i] => 0;
+    private int Slice(int i, int j) => 0;
+}
+class C
+{
+    void M(B b)
+    {
+        _ = b[^0];
+        _ = b[0..];
+    }
+}";
+            var comp = CreateCompilationWithIndexAndRange(src);
+            comp.VerifyDiagnostics(
+                // (12,15): error CS1503: Argument 1: cannot convert from 'System.Index' to 'int'
+                //         _ = b[^0];
+                Diagnostic(ErrorCode.ERR_BadArgType, "^0").WithArguments("1", "System.Index", "int").WithLocation(12, 15),
+                // (13,15): error CS1503: Argument 1: cannot convert from 'System.Range' to 'int'
+                //         _ = b[0..];
+                Diagnostic(ErrorCode.ERR_BadArgType, "0..").WithArguments("1", "System.Range", "int").WithLocation(13, 15)
+                );
+        }
+
+        [Fact]
+        public void PatternIndexAndRangeStaticSlice()
+        {
+            var src = @"
+class B
+{
+    public int Length => 0;
+    private static int Slice(int i, int j) => 0;
+}
+class C
+{
+    void M(B b)
+    {
+        _ = b[0..];
+    }
+}";
+            var comp = CreateCompilationWithIndexAndRange(src);
+            comp.VerifyDiagnostics(
+                // (11,13): error CS0021: Cannot apply indexing with [] to an expression of type 'B'
+                //         _ = b[0..];
+                Diagnostic(ErrorCode.ERR_BadIndexLHS, "b[0..]").WithArguments("B").WithLocation(11, 13)
+                );
+        }
+
+        [Fact]
+        public void PatternIndexAndRangeNoGetOffset()
+        {
+            var src = @"
+namespace System
+{
+    public struct Index
+    {
+        public Index(int value, bool fromEnd) { }
+        public static implicit operator Index(int value) => default;
+    }
+    public struct Range
+    {
+        public Range(Index start, Index end) { }
+        public Index Start => default;
+        public Index End => default;
+    }
+}
+class C
+{
+    public int Length => 0;
+    public int this[int i] => 0;
+    public int Slice(int i, int j) => 0;
+    void M()
+    {
+        _ = this[^0];
+        _ = this[0..];
+    }
+}";
+            var comp = CreateCompilation(src);
+            comp.VerifyDiagnostics(
+                    // (23,13): error CS0656: Missing compiler required member 'System.Index.GetOffset'
+                    //         _ = this[^0];
+                    Diagnostic(ErrorCode.ERR_MissingPredefinedMember, "this[^0]").WithArguments("System.Index", "GetOffset").WithLocation(23, 13),
+                    // (24,13): error CS0656: Missing compiler required member 'System.Index.GetOffset'
+                    //         _ = this[0..];
+                    Diagnostic(ErrorCode.ERR_MissingPredefinedMember, "this[0..]").WithArguments("System.Index", "GetOffset").WithLocation(24, 13)
+                );
+        }
+
+        [Theory]
+        [InlineData("Start")]
+        [InlineData("End")]
+        public void PatternIndexAndRangeNoStartAndEnd(string propertyName)
+        {
+            var src = @"
+namespace System
+{
+    public struct Index
+    {
+        public Index(int value, bool fromEnd) { }
+        public static implicit operator Index(int value) => default;
+        public int GetOffset(int length) => 0;
+    }
+    public struct Range
+    {
+        public Range(Index start, Index end) { }
+        public Index " + propertyName + @" => default;
+    }
+}
+class C
+{
+    public int Length => 0;
+    public int this[int i] => 0;
+    public int Slice(int i, int j) => 0;
+    void M()
+    {
+        _ = this[^0];
+        _ = this[0..];
+    }
+}";
+            var comp = CreateCompilation(src);
+
+            comp.VerifyDiagnostics(
+                // (24,13): error CS0656: Missing compiler required member 'System.Range.get_...'
+                //         _ = this[0..];
+                Diagnostic(ErrorCode.ERR_MissingPredefinedMember, "this[0..]").WithArguments("System.Range", "get_" + (propertyName == "Start" ? "End" : "Start")).WithLocation(24, 13)
+                );
+        }
+
+        [Fact]
+        public void PatternIndexAndRangeNoOptionalParams()
+        {
+            var comp = CreateCompilationWithIndexAndRange(@"
+class C
+{
+    public int Length => 0;
+    public int this[int i, int j = 0] => i;
+    public int Slice(int i, int j, int k = 0) => i;
+    public void M()
+    {
+        _ = this[^0];
+        _ = this[0..];
+    }
+}");
+            comp.VerifyDiagnostics(
+                // (9,18): error CS1503: Argument 1: cannot convert from 'System.Index' to 'int'
+                //         _ = this[^0];
+                Diagnostic(ErrorCode.ERR_BadArgType, "^0").WithArguments("1", "System.Index", "int").WithLocation(9, 18),
+                // (10,18): error CS1503: Argument 1: cannot convert from 'System.Range' to 'int'
+                //         _ = this[0..];
+                Diagnostic(ErrorCode.ERR_BadArgType, "0..").WithArguments("1", "System.Range", "int").WithLocation(10, 18));
+        }
+
+        [Fact]
+        public void PatternIndexAndRangeUseOriginalDefition()
+        {
+            var comp = CreateCompilationWithIndexAndRange(@"
+struct S1<T>
+{
+    public int Length => 0;
+    public int this[T t] => 0;
+    public int Slice(T t, int j) => 0;
+}
+struct S2<T>
+{
+    public T Length => default;
+    public int this[int t] => 0;
+    public int Slice(int t, int j) => 0;
+}
+class C
+{
+    void M()
+    {
+        var s1 = new S1<int>();
+        _ = s1[^0];
+        _ = s1[0..];
+
+        var s2 = new S2<int>();
+        _ = s2[^0];
+        _ = s2[0..];
+    }
+}");
+            comp.VerifyDiagnostics(
+                // (19,16): error CS1503: Argument 1: cannot convert from 'System.Index' to 'int'
+                //         _ = s1[^0];
+                Diagnostic(ErrorCode.ERR_BadArgType, "^0").WithArguments("1", "System.Index", "int").WithLocation(19, 16),
+                // (20,16): error CS1503: Argument 1: cannot convert from 'System.Range' to 'int'
+                //         _ = s1[0..];
+                Diagnostic(ErrorCode.ERR_BadArgType, "0..").WithArguments("1", "System.Range", "int").WithLocation(20, 16),
+                // (23,16): error CS1503: Argument 1: cannot convert from 'System.Index' to 'int'
+                //         _ = s2[^0];
+                Diagnostic(ErrorCode.ERR_BadArgType, "^0").WithArguments("1", "System.Index", "int").WithLocation(23, 16),
+                // (24,16): error CS1503: Argument 1: cannot convert from 'System.Range' to 'int'
+                //         _ = s2[0..];
+                Diagnostic(ErrorCode.ERR_BadArgType, "0..").WithArguments("1", "System.Range", "int").WithLocation(24, 16));
+        }
 
         [Fact]
         [WorkItem(31889, "https://github.com/dotnet/roslyn/issues/31889")]
@@ -156,13 +744,7 @@ class C
         var y = s[1..];
     }
 }");
-            comp.VerifyDiagnostics(
-                // (6,19): error CS1503: Argument 1: cannot convert from 'System.Index' to 'int'
-                //         var x = s[^0];
-                Diagnostic(ErrorCode.ERR_BadArgType, "^0").WithArguments("1", "System.Index", "int").WithLocation(6, 19),
-                // (7,19): error CS1503: Argument 1: cannot convert from 'System.Range' to 'int'
-                //         var y = s[1..];
-                Diagnostic(ErrorCode.ERR_BadArgType, "1..").WithArguments("1", "System.Range", "int").WithLocation(7, 19));
+            comp.VerifyDiagnostics();
         }
 
         [Fact]
@@ -209,27 +791,6 @@ public class C {
                 // (4,25): error CS1510: A ref or out value must be an assignable variable
                 //         ref var x = ref ^0;
                 Diagnostic(ErrorCode.ERR_RefLvalueExpected, "^0").WithLocation(4, 25));
-        }
-
-        [Fact]
-        public void NetStandard20StringNoIndexRangeIndexers()
-        {
-            var comp = CreateCompilationWithIndexAndRange(@"
-public class C
-{
-    public void M(string s)
-    {
-        var x = s[^2];
-        var y = s[0..2];
-    }
-}");
-            comp.VerifyDiagnostics(
-                // (6,19): error CS1503: Argument 1: cannot convert from 'System.Index' to 'int'
-                //         var x = s[^2];
-                Diagnostic(ErrorCode.ERR_BadArgType, "^2").WithArguments("1", "System.Index", "int").WithLocation(6, 19),
-                // (7,19): error CS1503: Argument 1: cannot convert from 'System.Range' to 'int'
-                //         var y = s[0..2];
-                Diagnostic(ErrorCode.ERR_BadArgType, "0..2").WithArguments("1", "System.Range", "int").WithLocation(7, 19));
         }
 
         [Fact]
@@ -419,9 +980,9 @@ public class Test
         {
             var expected = new[]
             {
-                // (6,17): error CS8652: The feature 'index operator' is currently in Preview and *unsupported*. To use Preview features, use the 'preview' language version.
+                // (6,17): error CS8652: The feature 'index operator' is not available in C# 7.3. Please use language version 8.0 or greater.
                 //         var x = ^1;
-                Diagnostic(ErrorCode.ERR_FeatureInPreview, "^1").WithArguments("index operator").WithLocation(6, 17)
+                Diagnostic(ErrorCode.ERR_FeatureNotAvailableInVersion7_3, "^1").WithArguments("index operator", "8.0").WithLocation(6, 17)
             };
             const string source = @"
 class Test
@@ -432,8 +993,7 @@ class Test
     }
 }";
             var compilation = CreateCompilationWithIndex(source, parseOptions: TestOptions.Regular7_3).VerifyDiagnostics(expected);
-            compilation = CreateCompilationWithIndex(source, parseOptions: TestOptions.RegularDefault).VerifyDiagnostics(expected);
-            compilation = CreateCompilationWithIndex(source, parseOptions: TestOptions.RegularPreview).VerifyDiagnostics();
+            compilation = CreateCompilationWithIndex(source, parseOptions: TestOptions.Regular8).VerifyDiagnostics();
         }
 
         [Fact]
@@ -902,22 +1462,21 @@ class Test
 }";
             var expected = new[]
             {
-                // (6,17): error CS8652: The feature 'range operator' is currently in Preview and *unsupported*. To use Preview features, use the 'preview' language version.
+                // (6,17): error CS8652: The feature 'range operator' is not available in C# 7.3. Please use language version 8.0 or greater.
                 //         var a = 1..2;
-                Diagnostic(ErrorCode.ERR_FeatureInPreview, "1..2").WithArguments("range operator").WithLocation(6, 17),
-                // (7,17): error CS8652: The feature 'range operator' is currently in Preview and *unsupported*. To use Preview features, use the 'preview' language version.
+                Diagnostic(ErrorCode.ERR_FeatureNotAvailableInVersion7_3, "1..2").WithArguments("range operator", "8.0").WithLocation(6, 17),
+                // (7,17): error CS8652: The feature 'range operator' is not available in C# 7.3. Please use language version 8.0 or greater.
                 //         var b = 1..;
-                Diagnostic(ErrorCode.ERR_FeatureInPreview, "1..").WithArguments("range operator").WithLocation(7, 17),
-                // (8,17): error CS8652: The feature 'range operator' is currently in Preview and *unsupported*. To use Preview features, use the 'preview' language version.
+                Diagnostic(ErrorCode.ERR_FeatureNotAvailableInVersion7_3, "1..").WithArguments("range operator", "8.0").WithLocation(7, 17),
+                // (8,17): error CS8652: The feature 'range operator' is not available in C# 7.3. Please use language version 8.0 or greater.
                 //         var c = ..2;
-                Diagnostic(ErrorCode.ERR_FeatureInPreview, "..2").WithArguments("range operator").WithLocation(8, 17),
-                // (9,17): error CS8652: The feature 'range operator' is currently in Preview and *unsupported*. To use Preview features, use the 'preview' language version.
+                Diagnostic(ErrorCode.ERR_FeatureNotAvailableInVersion7_3, "..2").WithArguments("range operator", "8.0").WithLocation(8, 17),
+                // (9,17): error CS8652: The feature 'range operator' is not available in C# 7.3. Please use language version 8.0 or greater.
                 //         var d = ..;
-                Diagnostic(ErrorCode.ERR_FeatureInPreview, "..").WithArguments("range operator").WithLocation(9, 17)
+                Diagnostic(ErrorCode.ERR_FeatureNotAvailableInVersion7_3, "..").WithArguments("range operator", "8.0").WithLocation(9, 17)
             };
             CreateCompilationWithIndexAndRange(source, parseOptions: TestOptions.Regular7_3).VerifyDiagnostics(expected);
-            CreateCompilationWithIndexAndRange(source, parseOptions: TestOptions.RegularDefault).VerifyDiagnostics(expected);
-            CreateCompilationWithIndexAndRange(source, parseOptions: TestOptions.RegularPreview).VerifyDiagnostics();
+            CreateCompilationWithIndexAndRange(source, parseOptions: TestOptions.Regular8).VerifyDiagnostics();
         }
 
         [Fact]
@@ -992,6 +1551,194 @@ partial class Program
                 // (7,22): error CS0841: Cannot use local variable 'y' before it is declared
                 //         var result = y..Create(out Index y);
                 Diagnostic(ErrorCode.ERR_VariableUsedBeforeDeclaration, "y").WithArguments("y").WithLocation(7, 22));
+        }
+
+        [Fact, WorkItem(39852, "https://github.com/dotnet/roslyn/issues/39852")]
+        public void DontAllowNamedArgumentsForImplicitRangeIndexer()
+        {
+            CreateCompilationWithIndexAndRangeAndSpan(@"
+using System;
+public class C 
+{
+    public static void M(string text) 
+    {
+        _ = text[startIndex: 1..^1];
+        _ = text[range: 1..^1];
+        _ = text[notEvenTheCorrectName: 1..^1];
+        _ = new Span<char>(text.ToCharArray())[start: 1..^1];
+        _ = new Span<char>(text.ToCharArray())[range: 1..^1];
+        _ = new Span<char>(text.ToCharArray())[notEvenTheCorrectName: 1..^1];
+    }
+}").VerifyDiagnostics(
+                    // (7,18): error CS8429: Invocation of implicit Range Indexer cannot name the argument.
+                    //         _ = text[startIndex: 1..^1];
+                    Diagnostic(ErrorCode.ERR_ImplicitRangeIndexerWithName, "startIndex").WithLocation(7, 18),
+                    // (8,18): error CS8429: Invocation of implicit Range Indexer cannot name the argument.
+                    //         _ = text[range: 1..^1];
+                    Diagnostic(ErrorCode.ERR_ImplicitRangeIndexerWithName, "range").WithLocation(8, 18),
+                    // (9,18): error CS8429: Invocation of implicit Range Indexer cannot name the argument.
+                    //         _ = text[notEvenTheCorrectName: 1..^1];
+                    Diagnostic(ErrorCode.ERR_ImplicitRangeIndexerWithName, "notEvenTheCorrectName").WithLocation(9, 18),
+                    // (10,48): error CS8429: Invocation of implicit Range Indexer cannot name the argument.
+                    //         _ = new Span<char>(text.ToCharArray())[start: 1..^1];
+                    Diagnostic(ErrorCode.ERR_ImplicitRangeIndexerWithName, "start").WithLocation(10, 48),
+                    // (11,48): error CS8429: Invocation of implicit Range Indexer cannot name the argument.
+                    //         _ = new Span<char>(text.ToCharArray())[range: 1..^1];
+                    Diagnostic(ErrorCode.ERR_ImplicitRangeIndexerWithName, "range").WithLocation(11, 48),
+                    // (12,48): error CS8429: Invocation of implicit Range Indexer cannot name the argument.
+                    //         _ = new Span<char>(text.ToCharArray())[notEvenTheCorrectName: 1..^1];
+                    Diagnostic(ErrorCode.ERR_ImplicitRangeIndexerWithName, "notEvenTheCorrectName").WithLocation(12, 48));
+        }
+
+        [Fact, WorkItem(39852, "https://github.com/dotnet/roslyn/issues/39852")]
+        public void DontAllowNamedArgumentsForImplicitIndexIndexer()
+        {
+            CreateCompilationWithIndexAndRangeAndSpan(@"
+using System;
+public class C 
+{
+    public static void M(string text) 
+    {
+        _ = text[index: ^1];
+        _ = text[notEvenTheCorrectName: ^1];
+        _ = new Span<char>(text.ToCharArray())[index: ^1];
+        _ = new Span<char>(text.ToCharArray())[notEvenTheCorrectName: ^1];
+    }
+}").VerifyDiagnostics(
+                    // (7,18): error CS8428: Invocation of implicit Index Indexer cannot name the argument.
+                    //         _ = text[index: ^1];
+                    Diagnostic(ErrorCode.ERR_ImplicitIndexIndexerWithName, "index").WithLocation(7, 18),
+                    // (8,18): error CS8428: Invocation of implicit Index Indexer cannot name the argument.
+                    //         _ = text[notEvenTheCorrectName: ^1];
+                    Diagnostic(ErrorCode.ERR_ImplicitIndexIndexerWithName, "notEvenTheCorrectName").WithLocation(8, 18),
+                    // (9,48): error CS8428: Invocation of implicit Index Indexer cannot name the argument.
+                    //         _ = new Span<char>(text.ToCharArray())[index: ^1];
+                    Diagnostic(ErrorCode.ERR_ImplicitIndexIndexerWithName, "index").WithLocation(9, 48),
+                    // (10,48): error CS8428: Invocation of implicit Index Indexer cannot name the argument.
+                    //         _ = new Span<char>(text.ToCharArray())[notEvenTheCorrectName: ^1];
+                    Diagnostic(ErrorCode.ERR_ImplicitIndexIndexerWithName, "notEvenTheCorrectName").WithLocation(10, 48));
+        }
+
+        [Fact, WorkItem(39852, "https://github.com/dotnet/roslyn/issues/39852")]
+        public void AllowNamedArgumentsForRealRangeIndexer1()
+        {
+            var comp = CreateCompilationWithIndexAndRange(@"
+using System;
+public class A
+{
+     public int this[Range range] => 42;
+}
+public class C 
+{
+    public static void Main() 
+    {
+        Console.Write(new A()[range: 1..^1]);
+    }
+}", options: TestOptions.ReleaseExe).VerifyDiagnostics();
+
+            CompileAndVerify(comp, expectedOutput: "42");
+        }
+
+        [Fact, WorkItem(39852, "https://github.com/dotnet/roslyn/issues/39852")]
+        public void AllowNamedArgumentsForRealRangeIndexer2()
+        {
+            var comp = CreateCompilationWithIndexAndRange(@"
+using System;
+public class A
+{
+     public int this[Range param] => 42;
+}
+public class C 
+{
+    public static void Main() 
+    {
+        Console.Write(new A()[param: 1..^1]);
+    }
+}", options: TestOptions.ReleaseExe).VerifyDiagnostics();
+
+            CompileAndVerify(comp, expectedOutput: "42");
+        }
+
+        [Fact, WorkItem(39852, "https://github.com/dotnet/roslyn/issues/39852")]
+        public void DontAllowIncorrectNamedArgumentsForRealRangeIndexer()
+        {
+            CreateCompilationWithIndexAndRange(@"
+using System;
+public class A
+{
+     public int this[Range range] => 42;
+}
+public class C 
+{
+    public static void Main() 
+    {
+        Console.Write(new A()[param: 1..^1]);
+    }
+}").VerifyDiagnostics(
+                    // (11,31): error CS1739: The best overload for 'this' does not have a parameter named 'param'
+                    //         Console.Write(new A()[param: 1..^1]);
+                    Diagnostic(ErrorCode.ERR_BadNamedArgument, "param").WithArguments("this", "param").WithLocation(11, 31));
+        }
+
+        [Fact, WorkItem(39852, "https://github.com/dotnet/roslyn/issues/39852")]
+        public void AllowNamedArgumentsForRealIndexIndexer1()
+        {
+            var comp = CreateCompilationWithIndexAndRange(@"
+using System;
+public class A
+{
+     public int this[Index index] => 42;
+}
+public class C 
+{
+    public static void Main() 
+    {
+        Console.Write(new A()[index: ^1]);
+    }
+}", options: TestOptions.ReleaseExe).VerifyDiagnostics();
+
+            CompileAndVerify(comp, expectedOutput: "42");
+        }
+
+        [Fact, WorkItem(39852, "https://github.com/dotnet/roslyn/issues/39852")]
+        public void AllowNamedArgumentsForRealIndexIndexer2()
+        {
+            var comp = CreateCompilationWithIndexAndRange(@"
+using System;
+public class A
+{
+     public int this[Index param] => 42;
+}
+public class C 
+{
+    public static void Main() 
+    {
+        Console.Write(new A()[param: ^1]);
+    }
+}", options: TestOptions.ReleaseExe).VerifyDiagnostics();
+
+            CompileAndVerify(comp, expectedOutput: "42");
+        }
+
+        [Fact, WorkItem(39852, "https://github.com/dotnet/roslyn/issues/39852")]
+        public void DontAllowIncorrectNamedArgumentsForRealIndexIndexer()
+        {
+            CreateCompilationWithIndexAndRange(@"
+using System;
+public class A
+{
+     public int this[Index index] => 42;
+}
+public class C 
+{
+    public static void Main() 
+    {
+        Console.Write(new A()[param: ^1]);
+    }
+}").VerifyDiagnostics(
+                    // (11,31): error CS1739: The best overload for 'this' does not have a parameter named 'param'
+                    //         Console.Write(new A()[param: ^1]);
+                    Diagnostic(ErrorCode.ERR_BadNamedArgument, "param").WithArguments("this", "param").WithLocation(11, 31));
         }
     }
 }

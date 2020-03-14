@@ -1,4 +1,6 @@
-﻿// Copyright (c) Microsoft.  All Rights Reserved.  Licensed under the Apache License, Version 2.0.  See License.txt in the project root for license information.
+﻿// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 using System.Threading.Tasks;
 using Microsoft.CodeAnalysis.Shared.TestHooks;
@@ -222,7 +224,7 @@ namespace Roslyn.VisualStudio.IntegrationTests.CSharp
             VisualStudio.InteractiveWindow.SubmitText("public class MyClass { public string MyFunc() { return \"MyClass.MyFunc()\"; } }");
             VisualStudio.InteractiveWindow.SubmitText("(new MyClass()).MyFunc()");
             VisualStudio.InteractiveWindow.WaitForLastReplOutput("\"MyClass.MyFunc()\"");
-            VisualStudio.Workspace.WaitForAsyncOperations(FeatureAttribute.SolutionCrawler);
+            VisualStudio.Workspace.WaitForAsyncOperations(Helper.HangMitigatingTimeout, FeatureAttribute.SolutionCrawler);
         }
 
         [WpfFact]
@@ -250,7 +252,7 @@ namespace Roslyn.VisualStudio.IntegrationTests.CSharp
             VisualStudio.InteractiveWindow.SubmitText("System.Windows.Forms.Form f = new System.Windows.Forms.Form(); f.Text = \"goo\";");
             VisualStudio.InteractiveWindow.SubmitText("f.Text");
             VisualStudio.InteractiveWindow.WaitForLastReplOutput("\"goo\"");
-            VisualStudio.Workspace.WaitForAsyncOperations(FeatureAttribute.SolutionCrawler);
+            VisualStudio.Workspace.WaitForAsyncOperations(Helper.HangMitigatingTimeout, FeatureAttribute.SolutionCrawler);
         }
     }
 }
